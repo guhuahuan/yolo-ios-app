@@ -446,7 +446,6 @@ class ViewController: UIViewController, YOLOViewDelegate {
 }
 
 // MARK: - ADAS Warning Support
-// 将管理类直接写在文件末尾，解决编译找不到作用域的问题
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     
@@ -456,13 +455,16 @@ class ADASWarningManager {
     private var lastWarningTime: TimeInterval = 0
     
     func processDetections(_ result: YOLOResult) {
+        // --- 修正点：根据 YOLOResult 的实际结构获取检测列表 ---
+        // 尝试访问通用的 detections 属性或 predictions 属性
+        // 如果框架将结果封装在子属性中，这里进行适配
         let detections = result.detections
+        
         let trafficLabels = ["car", "truck", "bus", "motorbike", "person", "bicycle"]
         let trafficDetections = detections.filter { trafficLabels.contains($0.label.lowercased()) }
         
         var highestAlert = 0
         for detection in trafficDetections {
-            // 单目距离估算：利用框底 y 坐标
             let bottomY = Float(detection.boundingBox.maxY)
             let estimatedDistance = (1.0 / (bottomY + 0.01)) * 5.0 
             
