@@ -434,7 +434,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
   }
 
   func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // --- 核心更新：集成 ADAS 预警逻辑 ---
+    // --- 核心更新：触发 ADAS 预警逻辑 ---
     ADASWarningManager.shared.processDetections(result)
     
     DispatchQueue.main.async { [weak self] in
@@ -443,4 +443,58 @@ class ViewController: UIViewController, YOLOViewDelegate {
       NotificationCenter.default.post(name: .yoloResultsAvailable, object: nil, userInfo: ["result": result])
     }
   }
+}
+
+// MARK: - ADAS Warning Support
+// 将管理类直接写在文件末尾，解决编译找不到作用域的问题
+class ADASWarningManager {
+    static let shared = ADASWarningManager()
+    
+    private let urgentDistance: Float = 5.0
+    private let warningDistance: Float = 15.0
+    private let hapticGenerator = UIImpactFeedbackGenerator(style: .heavy)
+    private var lastWarningTime: TimeInterval = 0
+    
+    func processDetections(_ result: YOLOResult) {
+        let detections = result.detections
+        let trafficLabels = ["car", "truck", "bus", "motorbike", "person", "bicycle"]
+        let trafficDetections = detections.filter { trafficLabels.contains($0.label.lowercased()) }
+        
+        var highestAlert = 0
+        for detection in trafficDetections {
+            // 单目距离估算：利用框底 y 坐标
+            let bottomY = Float(detection.boundingBox.maxY)
+            let estimatedDistance = (1.0 / (bottomY + 0.01)) * 5.0 
+            
+            if estimatedDistance < urgentDistance {
+                highestAlert = max(highestAlert, 2)
+            } else if estimatedDistance < warningDistance {
+                highestAlert = max(highestAlert, 1)
+            }
+        }
+        
+        if highestAlert == 2 {
+            triggerUrgentAction()
+        } else if highestAlert == 1 {
+            playWarningSound()
+        }
+    }
+    
+    private func triggerUrgentAction() {
+        let currentTime = Date().timeIntervalSince1970
+        if currentTime - lastWarningTime > 0.5 {
+            hapticGenerator.prepare()
+            hapticGenerator.impactOccurred()
+            AudioServicesPlaySystemSound(1016)
+            lastWarningTime = currentTime
+        }
+    }
+    
+    private func playWarningSound() {
+        let currentTime = Date().timeIntervalSince1970
+        if currentTime - lastWarningTime > 2.0 {
+            AudioServicesPlaySystemSound(1052)
+            lastWarningTime = currentTime
+        }
+    }
 }
