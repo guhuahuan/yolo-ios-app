@@ -75,7 +75,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
     setupModelSegmentedControl()
     setupCustomModelButton()
 
-    if tasks.indices.contains(2) { // Default to Detect
+    if tasks.indices.contains(2) {
       segmentedControl.selectedSegmentIndex = 2
       currentTask = tasks[2].name
       reloadModelEntriesAndLoadFirst(for: currentTask)
@@ -86,59 +86,62 @@ class ViewController: UIViewController, YOLOViewDelegate {
     yoloView.sliderIoU.addTarget(self, action: #selector(sliderValueChanged), for: .valueChanged)
     yoloView.sliderNumItems.addTarget(self, action: #selector(sliderValueChanged), for: .valueChanged)
 
-    [labelName, labelFPS, labelVersion].forEach { $0?.textColor = .white }
+    if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+      labelVersion.text = "v\(version)"
+    }
   }
 
   private func getModelFiles(in folderName: String) -> [String] {
     guard let folderURL = Bundle.main.url(forResource: folderName, withExtension: nil),
       let fileURLs = try? FileManager.default.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
     else { return [] }
-    return fileURLs.filter { ["mlmodel", "mlpackage"].contains($0.pathExtension) }.map { $0.lastPathComponent }.sorted()
+    return fileURLs.filter { ["mlmodel", "mlpackage", "mlmodelc"].contains($0.pathExtension) }.map { $0.lastPathComponent }.sorted()
+  }
+
+  func loadModel(entry: ModelEntry, forTask task: String) {
+    guard !isLoadingModel else { return }
+    isLoadingModel = true
+    setLoadingState(true)
+    
+    let yoloTask = tasks.first(where: { $0.name == task })?.yoloTask ?? .detect
+    let folder = tasks.first(where: { $0.name == task })?.folder ?? "Models/Detect"
+    
+    if let folderURL = Bundle.main.url(forResource: folder, withExtension: nil) {
+        let modelURL = folderURL.appendingPathComponent(entry.identifier)
+        yoloView.setModel(modelPathOrName: modelURL.path, task: yoloTask) { [weak self] result in
+            DispatchQueue.main.async {
+                self?.isLoadingModel = false
+                self?.setLoadingState(false)
+                self?.yoloView.setInferenceFlag(ok: result.isSuccess)
+                if result.isSuccess { self?.labelName.text = entry.displayName }
+            }
+        }
+    }
   }
 
   private func reloadModelEntriesAndLoadFirst(for taskName: String) {
     currentModels = makeModelEntries(for: taskName)
     let modelTuples = currentModels.map { ($0.identifier, $0.remoteURL, $0.isLocalBundle) }
     standardModels = ModelSelectionManager.categorizeModels(from: modelTuples)
-    let yoloTask = tasks.first(where: { $0.name == taskName })?.yoloTask ?? .detect
-    ModelSelectionManager.setupSegmentedControl(modelSegmentedControl, standardModels: standardModels, currentTask: yoloTask)
-
     if let firstSize = ModelSelectionManager.ModelSize.allCases.first, let model = standardModels[firstSize] {
-      let entry = ModelEntry(displayName: (model.name as NSString).deletingPathExtension, identifier: model.name, isLocalBundle: model.isLocal, isRemote: model.url != nil, remoteURL: model.url)
+      let entry = ModelEntry(displayName: (model.name as NSString).deletingPathExtension, identifier: model.name, isLocalBundle: model.isLocal, isRemote: false, remoteURL: nil)
       loadModel(entry: entry, forTask: taskName)
     }
   }
 
   private func makeModelEntries(for taskName: String) -> [ModelEntry] {
     let localFileNames = modelsForTask[taskName] ?? []
-    let localEntries = localFileNames.map { ModelEntry(displayName: ($0 as NSString).deletingPathExtension, identifier: $0, isLocalBundle: true, isRemote: false, remoteURL: nil) }
-    return localEntries
+    return localFileNames.map { ModelEntry(displayName: ($0 as NSString).deletingPathExtension, identifier: $0, isLocalBundle: true, isRemote: false, remoteURL: nil) }
   }
 
-  func loadModel(entry: ModelEntry, forTask task: String) {
-    guard !isLoadingModel else { return }
-    isLoadingModel = true
-    yoloView.setInferenceFlag(ok: false)
-    
-    let yoloTask = tasks.first(where: { $0.name == task })?.yoloTask ?? .detect
-    guard let folderURL = tasks.first(where: { $0.name == task })?.folder,
-          let folderPathURL = Bundle.main.url(forResource: folderURL, withExtension: nil) else { return }
-    
-    let modelURL = folderPathURL.appendingPathComponent(entry.identifier)
-    yoloView.setModel(modelPathOrName: modelURL.path, task: yoloTask) { [weak self] result in
-        DispatchQueue.main.async {
-            self?.isLoadingModel = false
-            self?.yoloView.setInferenceFlag(ok: result.isSuccess)
-            if result.isSuccess { self?.labelName.text = entry.displayName }
-        }
-    }
+  private func setLoadingState(_ loading: Bool) {
+    loading ? activityIndicator.startAnimating() : activityIndicator.stopAnimating()
+    view.isUserInteractionEnabled = !loading
   }
 
   @objc func sliderValueChanged(_ sender: UISlider) {
-    let conf = Double(round(100 * yoloView.sliderConf.value)) / 100
-    let iou = Double(round(100 * yoloView.sliderIoU.value)) / 100
-    let maxItems = Int(yoloView.sliderNumItems.value)
-    NotificationCenter.default.post(name: .thresholdDidChange, object: nil, userInfo: ["conf": conf, "iou": iou, "maxItems": maxItems])
+    let conf = Double(yoloView.sliderConf.value)
+    NotificationCenter.default.post(name: .thresholdDidChange, object: nil, userInfo: ["conf": conf])
   }
 
   func yoloView(_ view: YOLOView, didUpdatePerformance fps: Double, inferenceTime: Double) {
@@ -146,10 +149,11 @@ class ViewController: UIViewController, YOLOViewDelegate {
   }
 
   func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // 调用报警逻辑
+    // 激活报警
     ADASWarningManager.shared.processDetections(result)
     
     DispatchQueue.main.async {
+      ExternalDisplayManager.shared.shareResults(result)
       NotificationCenter.default.post(name: .yoloResultsAvailable, object: nil, userInfo: ["result": result])
     }
   }
@@ -166,74 +170,66 @@ class ViewController: UIViewController, YOLOViewDelegate {
   @objc private func modelSizeChanged(_ sender: UISegmentedControl) {
     let size = ModelSelectionManager.ModelSize.allCases[sender.selectedSegmentIndex]
     if let model = standardModels[size] {
-        let entry = ModelEntry(displayName: (model.name as NSString).deletingPathExtension, identifier: model.name, isLocalBundle: model.isLocal, isRemote: model.url != nil, remoteURL: model.url)
+        let entry = ModelEntry(displayName: (model.name as NSString).deletingPathExtension, identifier: model.name, isLocalBundle: model.isLocal, isRemote: false, remoteURL: nil)
         loadModel(entry: entry, forTask: currentTask)
     }
   }
 }
 
-// MARK: - ADAS Warning Manager (兼容版本)
+// MARK: - ADAS 报警逻辑 (完整保持且增强)
 class ADASWarningManager {
     static let shared = ADASWarningManager()
-    
-    private let urgentDistance: Float = 0.85 // 归一化坐标，越接近 1.0 越近
-    private let hapticGenerator = UIImpactFeedbackGenerator(style: .heavy)
-    private var lastWarningTime: TimeInterval = 0
+    private let urgentThreshold: Float = 0.75 
+    private let haptic = UIImpactFeedbackGenerator(style: .heavy)
+    private var lastAlertTime: TimeInterval = 0
     
     func processDetections(_ result: Any) {
         let mirror = Mirror(reflecting: result)
+        var detections: [Any] = []
         
-        // 自动探测结果属性：iOS 库中常见的 predictions, detections, 或 results
-        let candidates = ["predictions", "detections", "results", "objects"]
-        var items: [Any] = []
-        
+        let candidates = ["predictions", "objects", "results", "detections"]
         for child in mirror.children {
             if let label = child.label, candidates.contains(label) {
                 if let array = child.value as? [Any] {
-                    items = array
+                    detections = array
                     break
                 }
             }
         }
         
-        guard !items.isEmpty else { return }
+        guard !detections.isEmpty else { return }
         
-        let trafficLabels = ["car", "truck", "bus", "motorbike", "person", "bicycle"]
         var shouldAlert = false
+        let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
         
-        for item in items {
+        for item in detections {
             let itemMirror = Mirror(reflecting: item)
-            var label = ""
-            var maxY: Float = 0
+            var currentLabel = ""
+            var bottomY: Float = 0
             
             for child in itemMirror.children {
                 if child.label == "label", let val = child.value as? String {
-                    label = val.lowercased()
+                    currentLabel = val.lowercased()
                 }
-                if child.label == "boundingBox", let box = child.value as? CGRect {
-                    maxY = Float(box.maxY)
+                if (child.label == "boundingBox" || child.label == "box"), let rect = child.value as? CGRect {
+                    bottomY = Float(rect.maxY)
                 }
             }
             
-            // 逻辑：如果是交通目标且在屏幕下方（靠近车辆）
-            if trafficLabels.contains(label) && maxY > urgentDistance {
+            if dangerLabels.contains(currentLabel) && bottomY > urgentThreshold {
                 shouldAlert = true
                 break
             }
         }
         
         if shouldAlert {
-            triggerWarning()
-        }
-    }
-    
-    private func triggerWarning() {
-        let currentTime = Date().timeIntervalSince1970
-        if currentTime - lastWarningTime > 1.0 {
-            hapticGenerator.prepare()
-            hapticGenerator.impactOccurred()
-            AudioServicesPlaySystemSound(1016) // 警笛声
-            lastWarningTime = currentTime
+            let now = Date().timeIntervalSince1970
+            if now - lastAlertTime > 1.0 {
+                haptic.prepare()
+                haptic.impactOccurred()
+                AudioServicesPlaySystemSound(1016)
+                lastAlertTime = now
+            }
         }
     }
 }
