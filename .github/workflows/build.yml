@@ -1,13 +1,11 @@
-name: Build Unsigned IPA
+name: Build YOLO IPA via Package
 
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
 
 jobs:
-  build-ipa:
+  build:
     runs-on: macos-latest
     
     steps:
@@ -16,44 +14,88 @@ jobs:
         with:
           lfs: true
 
-      - name: Clean and Build App
-        run: |
-          # 自动识别项目名和 Scheme
-          PROJECT_NAME=$(ls -d *.xcodeproj | head -n 1)
-          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_NAME" | awk '/Schemes:/ {found=1; next} found {print $1; exit}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-          
-          echo "Building $PROJECT_NAME with scheme $SCHEME_NAME..."
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
-          # 编译成真机架构的 .app 文件，跳过签名
+      - name: Create Project Specification
+        run: |
+          # 创建一个项目配置文件，告诉系统如何把你的代码编成 App
+          cat <<EOF > project.yml
+          name: YOLOApp
+          options:
+            bundleIdPrefix: com.guhuahuan
+          targets:
+            YOLOApp:
+              type: application
+              platform: iOS
+              deploymentTarget: "16.0"
+              sources: 
+                - path: Sources/YOLO # 指向你的源码路径
+              dependencies:
+                - package: ZIPFoundation
+              settings:
+                INFOPLIST_FILE: Info.plist
+                CODE_SIGNING_ALLOWED: NO
+          packages:
+            ZIPFoundation:
+              url: https://github.com/weichsel/ZIPFoundation.git
+              from: 0.9.20
+          EOF
+
+      - name: Create Minimal Info.plist
+        run: |
+          # 必须包含摄像头权限，否则 App 无法运行
+          cat <<EOF > Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>\$(EXECUTABLE_NAME)</string>
+              <key>CFBundleIdentifier</key>
+              <string>\$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+              <key>CFBundleName</key>
+              <string>YOLOApp</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>NSCameraUsageDescription</key>
+              <string>Needs camera for YOLO detection</string>
+              <key>UILaunchStoryboardName</key>
+              <string>LaunchScreen</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Generate Project
+        run: xcodegen generate
+
+      - name: Build IPA
+        run: |
+          # 编译生成的项目
           xcodebuild build \
-            -project "$PROJECT_NAME" \
-            -scheme "$SCHEME_NAME" \
+            -project YOLOApp.xcodeproj \
+            -scheme YOLOApp \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            CODE_SIGN_IDENTITY=""
 
-      - name: Package as IPA
+      - name: Package IPA
         run: |
-          # 创建 Payload 目录，这是标准 IPA 的结构要求
           mkdir -p Payload
-          
-          # 将编译出的 .app 文件夹拷贝到 Payload 目录
-          # 注意：这里的通配符会自动匹配你的 App 名称
-          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
-          
-          # 使用 zip 命令压缩成 .ipa 文件
-          zip -r YOLO_Project_Unsigned.ipa Payload
-          
-          # 创建一个输出目录存放最终文件
+          cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
+          zip -r YOLO_Mobile.ipa Payload
           mkdir -p output
-          mv YOLO_Project_Unsigned.ipa output/
+          mv YOLO_Mobile.ipa output/
 
-      - name: Upload IPA Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-iOS-App-IPA
-          path: output/YOLO_Project_Unsigned.ipa
+          name: YOLO-IPA
+          path: output/YOLO_Mobile.ipa
