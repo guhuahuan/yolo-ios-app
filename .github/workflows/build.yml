@@ -1,0 +1,37 @@
+name: Unsigned iOS Build
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          lfs: true # 如果你的 .mlmodel 很大，必须开启 LFS
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build App (Unsigned)
+        run: |
+          xcodebuild build \
+            -project *.xcodeproj \
+            -scheme "yolo-ios-app" \
+            -configuration Debug \
+            -sdk iphoneos \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unsigned-YOLO-App
+          # 编译产物通常在这个路径
+          path: ~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug-iphoneos/*.app
