@@ -1,4 +1,4 @@
-name: Build YOLO IPA (Fixed UIKit Entry)
+name: Build YOLO iOS IPA (Using Existing Project)
 
 on:
   push:
@@ -12,105 +12,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          lfs: true
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Create App Entry (AppDelegate.swift)
-        run: |
-          cat <<EOF > AppDelegate.swift
-          import UIKit
-          // 移除 SwiftUI 依赖，改用纯 UIKit 启动以绕过协议报错
-
-          @main
-          class AppDelegate: UIResponder, UIApplicationDelegate {
-              var window: UIWindow?
-              func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-                  window = UIWindow(frame: UIScreen.main.bounds)
-                  
-                  // 根据文件列表，尝试直接加载 YOLOCamera 控制器
-                  // 这通常是实时检测的核心入口
-                  let rootVC = YOLOCamera()
-                  
-                  window?.rootViewController = rootVC
-                  window?.makeKeyAndVisible()
-                  return true
-              }
-          }
-          EOF
-
-      - name: Create Project Specification
-        run: |
-          cat <<EOF > project.yml
-          name: YOLOApp
-          options:
-            bundleIdPrefix: com.guhuahuan
-          targets:
-            YOLOApp:
-              type: application
-              platform: iOS
-              deploymentTarget: "16.0"
-              sources: 
-                - path: Sources/YOLO
-                  excludes: ["**/README.md"]
-                - path: AppDelegate.swift
-                - path: Tests/YOLOTests/Resources
-                  excludes: ["**/README.md"]
-              dependencies:
-                - package: ZIPFoundation
-              settings:
-                INFOPLIST_FILE: Info.plist
-                CODE_SIGNING_ALLOWED: NO
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore
-          packages:
-            ZIPFoundation:
-              url: https://github.com/weichsel/ZIPFoundation.git
-              from: 0.9.20
-          EOF
-
-      - name: Create Info.plist
-        run: |
-          cat <<EOF > Info.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>\$(EXECUTABLE_NAME)</string>
-              <key>CFBundleIdentifier</key>
-              <string>\$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-              <key>CFBundleName</key>
-              <string>YOLOApp</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>CFBundleVersion</key>
-              <string>1</string>
-              <key>NSCameraUsageDescription</key>
-              <string>需要摄像头权限来进行实时工业视觉检测</string>
-              <key>UILaunchStoryboardName</key>
-              <string>LaunchScreen</string>
-              <key>LSRequiresIPhoneOS</key>
-              <true/>
-              <key>UIApplicationSceneManifest</key>
-              <dict>
-                  <key>UIApplicationSupportsMultipleScenes</key>
-                  <false/>
-              </dict>
-          </dict>
-          </plist>
-          EOF
-
-      - name: Generate Project
-        run: xcodegen generate
+          lfs: true # 确保下载了 LFS 管理的大体积模型文件
 
       - name: Build Project
         run: |
+          # 根据你提供的图片，工程文件在 YOLOiOSApp/ 目录下
+          # 请确认 -scheme 的名字是否为 YOLOiOSApp（通常与工程名一致）
           xcodebuild build \
-            -project YOLOApp.xcodeproj \
-            -scheme YOLOApp \
+            -project YOLOiOSApp/YOLOiOSApp.xcodeproj \
+            -scheme YOLOiOSApp \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath ./build \
@@ -122,13 +32,19 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Fixed.ipa Payload
+          # 复制生成的 .app 文件
+          cp -R build/Build/Products/Release-iphoneos/YOLOiOSApp.app Payload/
+          
+          # 验证模型文件是否被正确打包（防止 0.0 FPS 问题）
+          echo "Checking for compiled models..."
+          find Payload/YOLOiOSApp.app -name "*.mlmodelc"
+          
+          zip -r YOLO_Build.ipa Payload
           mkdir -p output
-          mv YOLO_Fixed.ipa output/
+          mv YOLO_Build.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-IPA
-          path: output/YOLO_Fixed.ipa
+          path: output/YOLO_Build.ipa
