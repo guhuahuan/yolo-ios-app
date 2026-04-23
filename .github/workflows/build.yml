@@ -1,37 +1,59 @@
-name: Unsigned iOS Build
+name: Build Unsigned IPA
 
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
-  build-ios:
+  build-ipa:
     runs-on: macos-latest
     
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          lfs: true # 如果你的 .mlmodel 很大，必须开启 LFS
+          lfs: true
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
-
-      - name: Build App (Unsigned)
+      - name: Clean and Build App
         run: |
+          # 自动识别项目名和 Scheme
+          PROJECT_NAME=$(ls -d *.xcodeproj | head -n 1)
+          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_NAME" | awk '/Schemes:/ {found=1; next} found {print $1; exit}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          
+          echo "Building $PROJECT_NAME with scheme $SCHEME_NAME..."
+
+          # 编译成真机架构的 .app 文件，跳过签名
           xcodebuild build \
-            -project *.xcodeproj \
-            -scheme "yolo-ios-app" \
-            -configuration Debug \
+            -project "$PROJECT_NAME" \
+            -scheme "$SCHEME_NAME" \
+            -configuration Release \
             -sdk iphoneos \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
+            -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: Upload Artifact
+      - name: Package as IPA
+        run: |
+          # 创建 Payload 目录，这是标准 IPA 的结构要求
+          mkdir -p Payload
+          
+          # 将编译出的 .app 文件夹拷贝到 Payload 目录
+          # 注意：这里的通配符会自动匹配你的 App 名称
+          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
+          
+          # 使用 zip 命令压缩成 .ipa 文件
+          zip -r YOLO_Project_Unsigned.ipa Payload
+          
+          # 创建一个输出目录存放最终文件
+          mkdir -p output
+          mv YOLO_Project_Unsigned.ipa output/
+
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Unsigned-YOLO-App
-          # 编译产物通常在这个路径
-          path: ~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug-iphoneos/*.app
+          name: YOLO-iOS-App-IPA
+          path: output/YOLO_Project_Unsigned.ipa
