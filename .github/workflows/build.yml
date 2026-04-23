@@ -1,4 +1,4 @@
-name: Build YOLO IPA
+name: Build YOLO IPA (Fixed Model Loading)
 
 on:
   push:
@@ -21,6 +21,7 @@ jobs:
         run: |
           cat <<EOF > AppDelegate.swift
           import UIKit
+          import YOLO
           import SwiftUI
 
           @main
@@ -28,21 +29,11 @@ jobs:
               var window: UIWindow?
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
-                  window?.backgroundColor = .white
-
-                  // 这里的参数根据你的 YOLOCamera.swift 定义进行了补全
-                  // 默认尝试加载 "yolov8n" 模型，这是该类库的常见默认值
-                  let cameraView = YOLOCamera(
-                      modelPathOrName: "yolov8n", 
-                      task: .detect, 
-                      cameraPosition: .back, 
-                      onDetection: { _ in }
-                  )
                   
-                  // 因为 YOLOCamera 是一个 SwiftUI View 结构体，必须用 UIHostingController 包装
-                  let rootVC = UIHostingController(rootView: cameraView)
-                  
-                  window?.rootViewController = rootVC
+                  // 强制初始化 YOLOView (SwiftUI) 或控制器
+                  // 这里我们直接使用 SwiftUI 托管控制器来加载你的 YOLOView
+                  let vc = UIHostingController(rootView: YOLOView())
+                  window?.rootViewController = vc
                   window?.makeKeyAndVisible()
                   return true
               }
@@ -63,13 +54,13 @@ jobs:
               sources: 
                 - path: Sources/YOLO
                 - path: AppDelegate.swift
+                - path: Tests/YOLOTests/Resources # 关键：包含模型文件路径
               dependencies:
                 - package: ZIPFoundation
               settings:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
-                SWIFT_VERSION: "5.0"
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore -framework SwiftUI -framework UIKit
+                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
@@ -96,16 +87,11 @@ jobs:
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>NSCameraUsageDescription</key>
-              <string>我们需要摄像头权限来进行实时物体检测</string>
+              <string>需要摄像头权限来进行实时工业视觉检测</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
               <true/>
-              <key>UIApplicationSceneManifest</key>
-              <dict>
-                  <key>UIApplicationSupportsMultipleScenes</key>
-                  <false/>
-              </dict>
           </dict>
           </plist>
           EOF
@@ -113,8 +99,9 @@ jobs:
       - name: Generate Project
         run: xcodegen generate
 
-      - name: Build IPA
+      - name: Build and Compile Models
         run: |
+          # 编译项目的同时，Xcode 会自动调用 xcrun coremlc 编译模型
           xcodebuild build \
             -project YOLOApp.xcodeproj \
             -scheme YOLOApp \
@@ -129,13 +116,18 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
+          # 确保将编译后的 .app 目录完整拷贝
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Fixed_v2.ipa Payload
+          
+          # 验证模型是否编译进去了（调试用）
+          ls -R Payload/YOLOApp.app | grep mlmodelc || echo "警告：未发现编译后的模型文件！"
+          
+          zip -r YOLO_Inference.ipa Payload
           mkdir -p output
-          mv YOLO_Fixed_v2.ipa output/
+          mv YOLO_Inference.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-Final-IPA
-          path: output/YOLO_Fixed_v2.ipa
+          name: YOLO-IPA-Final
+          path: output/YOLO_Inference.ipa
