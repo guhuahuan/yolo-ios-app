@@ -1,4 +1,4 @@
-name: Build YOLO IPA via Package
+name: Build YOLO IPA
 
 on:
   push:
@@ -29,14 +29,12 @@ jobs:
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
                   
-                  let vc: UIViewController
+                  // 这里的 YOLOView 是你 Sources/YOLO/YOLOView.swift 里的结构体
+                  // 我们使用 UIHostingController 将其加载到 UIKit 容器中
+                  let contentView = YOLOView()
+                  let rootVC = UIHostingController(rootView: contentView)
                   
-                  // 尝试使用你的 YOLOView 启动
-                  // 如果 YOLOView 定义为遵循 View 的结构体，这里可以成功
-                  let mainView = YOLOView() 
-                  vc = UIHostingController(rootView: mainView)
-                  
-                  window?.rootViewController = vc
+                  window?.rootViewController = rootVC
                   window?.backgroundColor = .white
                   window?.makeKeyAndVisible()
                   return true
@@ -91,7 +89,7 @@ jobs:
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>NSCameraUsageDescription</key>
-              <string>我们需要使用摄像头来进行实时的道路物体检测</string>
+              <string>我们需要使用相机进行实时道路物体检测</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
@@ -125,12 +123,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Final_Release.ipa Payload
+          zip -r YOLO_Working.ipa Payload
           mkdir -p output
-          mv YOLO_Final_Release.ipa output/
+          mv YOLO_Working.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA-Production
-          path: output/YOLO_Final_Release.ipa
+          name: YOLO-Final-IPA
+          path: output/YOLO_Working.ipa
