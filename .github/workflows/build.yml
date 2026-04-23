@@ -29,12 +29,15 @@ jobs:
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
                   
-                  // 使用 UIHostingController 包装 YOLOView (SwiftUI)
-                  // 如果 YOLOView 需要参数，这里直接初始化
-                  let yoloView = YOLOView()
-                  let rootVC = UIHostingController(rootView: yoloView)
+                  let vc: UIViewController
                   
-                  window?.rootViewController = rootVC
+                  // 尝试使用你的 YOLOView 启动
+                  // 如果 YOLOView 定义为遵循 View 的结构体，这里可以成功
+                  let mainView = YOLOView() 
+                  vc = UIHostingController(rootView: mainView)
+                  
+                  window?.rootViewController = vc
+                  window?.backgroundColor = .white
                   window?.makeKeyAndVisible()
                   return true
               }
@@ -60,7 +63,8 @@ jobs:
               settings:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore
+                SWIFT_VERSION: "5.0"
+                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore -framework SwiftUI
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
@@ -87,7 +91,7 @@ jobs:
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>NSCameraUsageDescription</key>
-              <string>需要摄像头权限进行实时 YOLO 检测</string>
+              <string>我们需要使用摄像头来进行实时的道路物体检测</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
@@ -121,12 +125,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Mobile_Final.ipa Payload
+          zip -r YOLO_Final_Release.ipa Payload
           mkdir -p output
-          mv YOLO_Mobile_Final.ipa output/
+          mv YOLO_Final_Release.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA-Working
-          path: output/YOLO_Mobile_Final.ipa
+          name: YOLO-IPA-Production
+          path: output/YOLO_Final_Release.ipa
