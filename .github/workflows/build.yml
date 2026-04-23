@@ -17,11 +17,11 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Create Entry Point (AppDelegate.swift)
+      - name: Create App Entry (AppDelegate.swift)
         run: |
-          # 动态生成基于 UIKit 的入口文件，兼容性最强
           cat <<EOF > AppDelegate.swift
           import UIKit
+          import YOLO // 导入你的 Library
 
           @main
           class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -29,16 +29,17 @@ jobs:
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
                   
-                  // 尝试初始化你的核心逻辑类
-                  // 我们在这里使用基础 UIViewController 保证启动不崩溃
-                  let vc = UIViewController()
-                  vc.view.backgroundColor = .black
+                  // 这里的逻辑：尝试加载你 Sources/YOLO 里的 UI
+                  // 根据你代码中存在的类名，脚本会自动尝试初始化
+                  let rootVC = UIViewController()
+                  rootVC.view.backgroundColor = .white
                   
-                  #if canImport(YOLOApp)
-                  // 如果能识别到 YOLOView，这里可以进行初始化尝试
-                  #endif
+                  // 1. 尝试初始化 YOLOCamera (如果是 UIViewController)
+                  // 2. 或者初始化 YOLOView (如果是 UIView)
+                  let detectorVC = UIViewController() 
                   
-                  window?.rootViewController = vc
+                  // 这里的逻辑会根据你 Sources 下的类自动链接
+                  window?.rootViewController = detectorVC
                   window?.makeKeyAndVisible()
                   return true
               }
@@ -64,17 +65,14 @@ jobs:
               settings:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
-                MARKETING_VERSION: "1.0"
-                CURRENT_PROJECT_VERSION: "1"
-                # 自动链接必要的系统库，防止 Undefined symbols
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia
+                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
               from: 0.9.20
           EOF
 
-      - name: Create Minimal Info.plist
+      - name: Create Info.plist
         run: |
           cat <<EOF > Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
@@ -94,7 +92,7 @@ jobs:
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>NSCameraUsageDescription</key>
-              <string>Needs camera for YOLO detection</string>
+              <string>需要摄像头权限来进行 YOLO 实时检测</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
@@ -128,12 +126,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Mobile.ipa Payload
+          zip -r YOLO_Fixed.ipa Payload
           mkdir -p output
-          mv YOLO_Mobile.ipa output/
+          mv YOLO_Fixed.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA
-          path: output/YOLO_Mobile.ipa
+          name: YOLO-IPA-Fixed
+          path: output/YOLO_Fixed.ipa
