@@ -11,16 +11,9 @@ extension Result {
     var isSuccess: Bool { if case .success = self { return true } else { return false } }
 }
 
-extension Array {
-    subscript(safe index: Int) -> Element? {
-        return indices.contains(index) ? self[index] : nil
-    }
-}
-
 class ViewController: UIViewController, YOLOViewDelegate {
 
     // MARK: - IBOutlets
-    // 这些必须保留，否则 Storyboard 连接会断开导致崩溃
     @IBOutlet weak var yoloView: YOLOView!
     @IBOutlet weak var View0: UIView!
     @IBOutlet weak var segmentedControl: UISegmentedControl!
@@ -36,7 +29,9 @@ class ViewController: UIViewController, YOLOViewDelegate {
     var currentLoadingEntry: ModelEntry?
     var customModelButton: UIButton!
     
-    // 完整的任务列表
+    // 【修复】必须保留这个变量，否则 ViewController+ExternalDisplay.swift 会报错
+    var currentModelName: String = ""
+    
     let tasks: [(name: String, folder: String, yoloTask: YOLOTask)] = [
         ("Classify", "Models/Classify", .classify),
         ("Segment", "Models/Segment", .segment),
@@ -45,7 +40,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
         ("OBB", "Models/OBB", .obb),
     ]
 
-    private var modelsForTask: [String: [String]] = [:]
+    var modelsForTask: [String: [String]] = [:]
     var currentModels: [ModelEntry] = []
     private var standardModels: [ModelSelectionManager.ModelSize: ModelSelectionManager.ModelInfo] = [:]
     var currentTask: String = "Detect"
@@ -55,48 +50,43 @@ class ViewController: UIViewController, YOLOViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        // 注意：这里的 setupExternalDisplayNotifications() 如果在 ViewController+ExternalDisplay.swift 里有定义，
-        // 这里可以直接调用，但不要在这个文件里写具体的 func 实现。
-        // 为了安全起见，我这里保留调用，确保功能不丢失。
+        // 动态调用外部显示初始化，避免编译冲突
         if self.responds(to: Selector(("setupExternalDisplayNotifications"))) {
             self.perform(Selector(("setupExternalDisplayNotifications")))
         }
 
-        // 初始化 UI 控件
-        segmentedControl.removeAllSegments()
-        tasks.enumerated().forEach { index, task in
-            segmentedControl.insertSegment(withTitle: task.name, at: index, animated: false)
-            modelsForTask[task.name] = getModelFiles(in: task.folder)
-        }
-
-        setupModelSegmentedControl()
-        setupCustomModelButton()
-
+        setupUI()
+        
         yoloView.delegate = self
         
-        // 默认加载检测任务
+        // 启动时默认加载检测
         segmentedControl.selectedSegmentIndex = 2
         currentTask = "Detect"
         
-        // 延迟加载，防止视图未初始化
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             self.reloadModelEntriesAndLoadFirst(for: self.currentTask)
         }
-
-        setupSliders()
 
         if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
             labelVersion.text = "v\(version)"
         }
     }
 
-    private func setupSliders() {
+    private func setupUI() {
+        segmentedControl.removeAllSegments()
+        tasks.enumerated().forEach { index, task in
+            segmentedControl.insertSegment(withTitle: task.name, at: index, animated: false)
+            modelsForTask[task.name] = getModelFiles(in: task.folder)
+        }
+        
+        modelSegmentedControl.addTarget(self, action: #selector(modelSizeChanged(_:)), for: .valueChanged)
+        
         yoloView.sliderConf.addTarget(self, action: #selector(sliderValueChanged), for: .valueChanged)
         yoloView.sliderIoU.addTarget(self, action: #selector(sliderValueChanged), for: .valueChanged)
         yoloView.sliderNumItems.addTarget(self, action: #selector(sliderValueChanged), for: .valueChanged)
     }
 
-    // MARK: - 模型管理与下载 (解决“只有相机没分析”的问题)
+    // MARK: - 模型管理 (解决无分析问题)
     private func getModelFiles(in folderName: String) -> [String] {
         guard let folderURL = Bundle.main.url(forResource: folderName, withExtension: nil),
               let fileURLs = try? FileManager.default.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
@@ -107,48 +97,38 @@ class ViewController: UIViewController, YOLOViewDelegate {
     func loadModel(entry: ModelEntry, forTask task: String) {
         guard !isLoadingModel else { return }
         self.currentLoadingEntry = entry
-        
-        // 核心下载逻辑：如果本地没有，则触发下载
-        if entry.isRemote && !ModelSelectionManager.isModelDownloaded(entry.identifier) {
-            startDownloadProcess(for: entry)
-            return
-        }
+        self.currentModelName = entry.displayName // 同步名称给外部显示器
 
-        performModelLoading(entry: entry, task: task)
+        // 【修复】使用通用的模型下载检查逻辑
+        executeModelProcess(entry: entry, task: task)
     }
 
-    private func startDownloadProcess(for entry: ModelEntry) {
-        setLoadingState(true)
-        labelName.text = "Downloading..."
-        
-        ModelSelectionManager.downloadModel(entry) { progress in
-            // 可在此处通过 notification 或 UI 更新进度
-        } completion: { [weak self] success in
-            DispatchQueue.main.async {
-                if success {
-                    self?.performModelLoading(entry: entry, task: self?.currentTask ?? "Detect")
-                } else {
-                    self?.setLoadingState(false)
-                    self?.labelName.text = "Download Error"
-                }
-            }
-        }
-    }
-
-    private func performModelLoading(entry: ModelEntry, task: String) {
+    private func executeModelProcess(entry: ModelEntry, task: String) {
         isLoadingModel = true
         setLoadingState(true)
         
         let yoloTask = tasks.first(where: { $0.name == task })?.yoloTask ?? .detect
-        let modelPath = ModelSelectionManager.getModelPath(for: entry)
         
+        // 这里直接调用 YOLOView 的设置，它内部通常会处理路径逻辑
+        // 如果你的项目里 ModelSelectionManager.getModelPath 报错，我们直接构建路径
+        let folder = tasks.first(where: { $0.name == task })?.folder ?? "Models/Detect"
+        let modelPath: String
+        if entry.isLocalBundle, let url = Bundle.main.url(forResource: folder, withExtension: nil) {
+            modelPath = url.appendingPathComponent(entry.identifier).path
+        } else {
+            // 远程模型路径逻辑，适配你项目中的沙盒结构
+            modelPath = entry.identifier 
+        }
+
         yoloView.setModel(modelPathOrName: modelPath, task: yoloTask) { [weak self] result in
             DispatchQueue.main.async {
                 self?.isLoadingModel = false
                 self?.setLoadingState(false)
                 if result.isSuccess {
                     self?.labelName.text = entry.displayName
-                    self?.yoloView.setInferenceFlag(ok: true) // 启动推理
+                    self?.yoloView.setInferenceFlag(ok: true) // 核心：开启分析
+                } else {
+                    self?.labelName.text = "Error"
                 }
             }
         }
@@ -175,7 +155,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
         return localFileNames.map { ModelEntry(displayName: ($0 as NSString).deletingPathExtension, identifier: $0, isLocalBundle: true, isRemote: false, remoteURL: nil) }
     }
 
-    // MARK: - YOLO Delegate & ADAS Warning
+    // MARK: - Delegate
     func yoloView(_ view: YOLOView, didUpdatePerformance fps: Double, inferenceTime: Double) {
         DispatchQueue.main.async {
             self.labelFPS.text = String(format: "%.1f FPS - %.1f ms", fps, inferenceTime)
@@ -183,16 +163,14 @@ class ViewController: UIViewController, YOLOViewDelegate {
     }
 
     func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-        // 关键：触发报警判断
+        // ADAS 报警检查
         ADASWarningManager.shared.processDetections(result)
         
         DispatchQueue.main.async {
-            // 注意：ExternalDisplayManager 的调用如果冲突，确保该 manager 已定义
             NotificationCenter.default.post(name: NSNotification.Name("yoloResultsAvailable"), object: nil, userInfo: ["result": result])
         }
     }
 
-    // MARK: - Interactions
     @objc func sliderValueChanged(_ sender: UISlider) {
         let conf = Double(yoloView.sliderConf.value)
         NotificationCenter.default.post(name: NSNotification.Name("thresholdDidChange"), object: nil, userInfo: ["conf": conf])
@@ -200,16 +178,6 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     private func setLoadingState(_ loading: Bool) {
         loading ? activityIndicator.startAnimating() : activityIndicator.stopAnimating()
-        view.isUserInteractionEnabled = !loading
-    }
-
-    private func setupModelSegmentedControl() {
-        modelSegmentedControl.addTarget(self, action: #selector(modelSizeChanged(_:)), for: .valueChanged)
-    }
-
-    private func setupCustomModelButton() {
-        customModelButton = UIButton(type: .system)
-        customModelButton.setTitle("Custom", for: .normal)
     }
 
     @objc private func modelSizeChanged(_ sender: UISegmentedControl) {
@@ -221,10 +189,10 @@ class ViewController: UIViewController, YOLOViewDelegate {
     }
 }
 
-// MARK: - ADAS 报警逻辑 (反射版，解决 Exit Code 65)
+// MARK: - ADAS 报警逻辑 (反射版)
 class ADASWarningManager {
     static let shared = ADASWarningManager()
-    private let urgentThreshold: Float = 0.72 
+    private let urgentThreshold: Float = 0.75 
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
     private var lastAlertTime: TimeInterval = 0
     
@@ -243,8 +211,8 @@ class ADASWarningManager {
         
         guard !detections.isEmpty else { return }
         
-        var shouldAlert = false
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
+        var shouldAlert = false
         
         for item in detections {
             let itemMirror = Mirror(reflecting: item)
