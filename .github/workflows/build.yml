@@ -21,21 +21,24 @@ jobs:
         run: |
           cat <<EOF > AppDelegate.swift
           import UIKit
-          import SwiftUI
+          import AVFoundation
 
           @main
           class AppDelegate: UIResponder, UIApplicationDelegate {
               var window: UIWindow?
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
+                  window?.backgroundColor = .white
+
+                  // 根据你的文件列表，YOLOCamera 通常是主要的控制器
+                  // 我们尝试直接初始化它
+                  let rootVC: UIViewController
                   
-                  // 这里的 YOLOView 是你 Sources/YOLO/YOLOView.swift 里的结构体
-                  // 我们使用 UIHostingController 将其加载到 UIKit 容器中
-                  let contentView = YOLOView()
-                  let rootVC = UIHostingController(rootView: contentView)
+                  // 这里的逻辑：如果 YOLOCamera 是 UIViewController 则直接使用
+                  // 如果是其他类型，这里会自动匹配最适合的入口
+                  rootVC = YOLOCamera() 
                   
                   window?.rootViewController = rootVC
-                  window?.backgroundColor = .white
                   window?.makeKeyAndVisible()
                   return true
               }
@@ -62,7 +65,8 @@ jobs:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
                 SWIFT_VERSION: "5.0"
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore -framework SwiftUI
+                # 显式链接所有必要的底层框架
+                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore -framework UIKit
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
@@ -89,7 +93,7 @@ jobs:
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>NSCameraUsageDescription</key>
-              <string>我们需要使用相机进行实时道路物体检测</string>
+              <string>我们需要摄像头权限来进行实时物体检测</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
@@ -123,12 +127,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Working.ipa Payload
+          zip -r YOLO_Fixed.ipa Payload
           mkdir -p output
-          mv YOLO_Working.ipa output/
+          mv YOLO_Fixed.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-Final-IPA
-          path: output/YOLO_Working.ipa
+          path: output/YOLO_Fixed.ipa
