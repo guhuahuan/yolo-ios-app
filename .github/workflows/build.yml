@@ -1,4 +1,4 @@
-name: Build YOLO IPA (Fixed Model Loading)
+name: Build YOLO IPA (Fixed Resource Conflict)
 
 on:
   push:
@@ -29,9 +29,6 @@ jobs:
               var window: UIWindow?
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
-                  
-                  // 强制初始化 YOLOView (SwiftUI) 或控制器
-                  // 这里我们直接使用 SwiftUI 托管控制器来加载你的 YOLOView
                   let vc = UIHostingController(rootView: YOLOView())
                   window?.rootViewController = vc
                   window?.makeKeyAndVisible()
@@ -53,8 +50,10 @@ jobs:
               deploymentTarget: "16.0"
               sources: 
                 - path: Sources/YOLO
+                  excludes: ["**/README.md"] # 排除冲突文件
                 - path: AppDelegate.swift
-                - path: Tests/YOLOTests/Resources # 关键：包含模型文件路径
+                - path: Tests/YOLOTests/Resources
+                  excludes: ["**/README.md"] # 排除冲突文件
               dependencies:
                 - package: ZIPFoundation
               settings:
@@ -99,9 +98,8 @@ jobs:
       - name: Generate Project
         run: xcodegen generate
 
-      - name: Build and Compile Models
+      - name: Build Project
         run: |
-          # 编译项目的同时，Xcode 会自动调用 xcrun coremlc 编译模型
           xcodebuild build \
             -project YOLOApp.xcodeproj \
             -scheme YOLOApp \
@@ -116,18 +114,13 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          # 确保将编译后的 .app 目录完整拷贝
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          
-          # 验证模型是否编译进去了（调试用）
-          ls -R Payload/YOLOApp.app | grep mlmodelc || echo "警告：未发现编译后的模型文件！"
-          
-          zip -r YOLO_Inference.ipa Payload
+          zip -r YOLO_Final.ipa Payload
           mkdir -p output
-          mv YOLO_Inference.ipa output/
+          mv YOLO_Final.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA-Final
-          path: output/YOLO_Inference.ipa
+          name: YOLO-IPA
+          path: output/YOLO_Final.ipa
