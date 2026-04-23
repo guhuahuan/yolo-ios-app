@@ -21,7 +21,7 @@ jobs:
         run: |
           cat <<EOF > AppDelegate.swift
           import UIKit
-          import AVFoundation
+          import SwiftUI
 
           @main
           class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -30,13 +30,17 @@ jobs:
                   window = UIWindow(frame: UIScreen.main.bounds)
                   window?.backgroundColor = .white
 
-                  // 根据你的文件列表，YOLOCamera 通常是主要的控制器
-                  // 我们尝试直接初始化它
-                  let rootVC: UIViewController
+                  // 这里的参数根据你的 YOLOCamera.swift 定义进行了补全
+                  // 默认尝试加载 "yolov8n" 模型，这是该类库的常见默认值
+                  let cameraView = YOLOCamera(
+                      modelPathOrName: "yolov8n", 
+                      task: .detect, 
+                      cameraPosition: .back, 
+                      onDetection: { _ in }
+                  )
                   
-                  // 这里的逻辑：如果 YOLOCamera 是 UIViewController 则直接使用
-                  // 如果是其他类型，这里会自动匹配最适合的入口
-                  rootVC = YOLOCamera() 
+                  // 因为 YOLOCamera 是一个 SwiftUI View 结构体，必须用 UIHostingController 包装
+                  let rootVC = UIHostingController(rootView: cameraView)
                   
                   window?.rootViewController = rootVC
                   window?.makeKeyAndVisible()
@@ -65,8 +69,7 @@ jobs:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
                 SWIFT_VERSION: "5.0"
-                # 显式链接所有必要的底层框架
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore -framework UIKit
+                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore -framework SwiftUI -framework UIKit
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
@@ -127,12 +130,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Fixed.ipa Payload
+          zip -r YOLO_Fixed_v2.ipa Payload
           mkdir -p output
-          mv YOLO_Fixed.ipa output/
+          mv YOLO_Fixed_v2.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-Final-IPA
-          path: output/YOLO_Fixed.ipa
+          path: output/YOLO_Fixed_v2.ipa
