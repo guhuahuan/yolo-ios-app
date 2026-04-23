@@ -20,6 +20,15 @@ extension Array {
 
 class ViewController: UIViewController, YOLOViewDelegate {
 
+  // --- 修复编译报错：补全缺失变量 ---
+  var currentModelName: String = ""
+  
+  // 修复编译报错：映射 slider 方法
+  @objc func sliderValueChanged(_ sender: Any) {
+      // 保持空逻辑或根据需要添加，主要为了通过编译
+  }
+  // -----------------------------
+
   override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
     if SceneDelegate.hasExternalDisplay {
       return [.landscapeLeft, .landscapeRight]
@@ -167,7 +176,10 @@ class ViewController: UIViewController, YOLOViewDelegate {
                 self?.isLoadingModel = false
                 self?.setLoadingState(false)
                 self?.yoloView.setInferenceFlag(ok: result.isSuccess)
-                if result.isSuccess { self?.labelName.text = entry.displayName }
+                if result.isSuccess { 
+                    self?.labelName.text = entry.displayName 
+                    self?.currentModelName = entry.identifier // 同步变量
+                }
             }
         }
     }
@@ -179,7 +191,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
   }
 
   func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // 调用报警逻辑
+    // 报警逻辑保持不变
     ADASWarningManager.shared.processDetections(result)
     
     DispatchQueue.main.async {
@@ -206,7 +218,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
   }
 }
 
-// MARK: - ADAS Warning (无位置限制版)
+// MARK: - ADAS Warning
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
@@ -232,12 +244,11 @@ class ADASWarningManager {
         
         if foundDanger {
             let now = Date().timeIntervalSince1970
-            if now - lastAlertTime > 1.0 { // 1秒报警间隔
+            if now - lastAlertTime > 1.0 {
                 haptic.prepare()
                 haptic.impactOccurred()
                 AudioServicesPlaySystemSound(1016)
                 lastAlertTime = now
-                print("⚠️ ADAS ALERT: Object Detected")
             }
         }
     }
