@@ -1,4 +1,4 @@
-name: Build YOLO IPA (Fixed Module Import)
+name: Build YOLO IPA (Fixed UIKit Entry)
 
 on:
   push:
@@ -21,8 +21,7 @@ jobs:
         run: |
           cat <<EOF > AppDelegate.swift
           import UIKit
-          import SwiftUI
-          // 注意：不需要 import YOLO，因为文件都在同一个 Target 中
+          // 移除 SwiftUI 依赖，改用纯 UIKit 启动以绕过协议报错
 
           @main
           class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -30,9 +29,11 @@ jobs:
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
                   
-                  // 直接使用 YOLOView，它在 Sources/YOLO 中定义
-                  let vc = UIHostingController(rootView: YOLOView())
-                  window?.rootViewController = vc
+                  // 根据文件列表，尝试直接加载 YOLOCamera 控制器
+                  // 这通常是实时检测的核心入口
+                  let rootVC = YOLOCamera()
+                  
+                  window?.rootViewController = rootVC
                   window?.makeKeyAndVisible()
                   return true
               }
@@ -61,7 +62,6 @@ jobs:
               settings:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
-                # 显式添加 Swift 搜索路径和框架支持
                 OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore
           packages:
             ZIPFoundation:
@@ -123,10 +123,6 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          
-          # 检查模型是否成功编译进 Bundle (mlmodelc)
-          find Payload/YOLOApp.app -name "*.mlmodelc"
-          
           zip -r YOLO_Fixed.ipa Payload
           mkdir -p output
           mv YOLO_Fixed.ipa output/
