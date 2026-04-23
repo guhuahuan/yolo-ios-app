@@ -434,11 +434,8 @@ class ViewController: UIViewController, YOLOViewDelegate {
   }
 
   func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // ==========================================
-    // ⚠️ 临时注释：为了让你能顺利通过 CI 编译打包
-    // 在你查明 YOLOResult 的正确属性名后，取消下方注释并修改传参
-    // ==========================================
-    // ADASWarningManager.shared.processDetections(result)
+    // 激活 ADAS 报警逻辑
+    ADASWarningManager.shared.processDetections(result)
     
     DispatchQueue.main.async { [weak self] in
       guard self != nil else { return }
@@ -458,20 +455,18 @@ class ADASWarningManager {
     private var lastWarningTime: TimeInterval = 0
     
     func processDetections(_ result: YOLOResult) {
-        // ==========================================
-        // ⚠️ TODO: 华焕，请在此处替换为你在源码里找到的属性名
-        // 最常见的是 result.predictions 或 result.objects
-        // 如果对象的标签属性不叫 label，或者框不叫 boundingBox，也请一并修改
-        // ==========================================
-        /*
-        let myDetections = result.predictions // <--- 修改这里
+        // 使用 Ultralytics 库中最常用的属性名：predictions
+        let myDetections = result.predictions 
         
         let trafficLabels = ["car", "truck", "bus", "motorbike", "person", "bicycle"]
         let trafficDetections = myDetections.filter { trafficLabels.contains($0.label.lowercased()) }
         
         var highestAlert = 0
         for detection in trafficDetections {
+            // 归一化坐标中 maxY 代表目标底端，离底部越近说明目标越近
             let bottomY = Float(detection.boundingBox.maxY)
+            
+            // 简化的距离估算（根据你的画面反馈，如果是人，bottomY 接近 0.9-1.0 时非常近）
             let estimatedDistance = (1.0 / (bottomY + 0.01)) * 5.0 
             
             if estimatedDistance < urgentDistance {
@@ -486,7 +481,6 @@ class ADASWarningManager {
         } else if highestAlert == 1 {
             playWarningSound()
         }
-        */
     }
     
     private func triggerUrgentAction() {
@@ -494,6 +488,7 @@ class ADASWarningManager {
         if currentTime - lastWarningTime > 0.5 {
             hapticGenerator.prepare()
             hapticGenerator.impactOccurred()
+            // 系统严重报警声 (警笛音效)
             AudioServicesPlaySystemSound(1016)
             lastWarningTime = currentTime
         }
@@ -502,6 +497,7 @@ class ADASWarningManager {
     private func playWarningSound() {
         let currentTime = Date().timeIntervalSince1970
         if currentTime - lastWarningTime > 2.0 {
+            // 较轻微的提示音
             AudioServicesPlaySystemSound(1052)
             lastWarningTime = currentTime
         }
