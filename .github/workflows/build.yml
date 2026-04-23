@@ -21,7 +21,7 @@ jobs:
         run: |
           cat <<EOF > AppDelegate.swift
           import UIKit
-          import YOLO // 导入你的 Library
+          import SwiftUI
 
           @main
           class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -29,17 +29,12 @@ jobs:
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
                   
-                  // 这里的逻辑：尝试加载你 Sources/YOLO 里的 UI
-                  // 根据你代码中存在的类名，脚本会自动尝试初始化
-                  let rootVC = UIViewController()
-                  rootVC.view.backgroundColor = .white
+                  // 使用 UIHostingController 包装 YOLOView (SwiftUI)
+                  // 如果 YOLOView 需要参数，这里直接初始化
+                  let yoloView = YOLOView()
+                  let rootVC = UIHostingController(rootView: yoloView)
                   
-                  // 1. 尝试初始化 YOLOCamera (如果是 UIViewController)
-                  // 2. 或者初始化 YOLOView (如果是 UIView)
-                  let detectorVC = UIViewController() 
-                  
-                  // 这里的逻辑会根据你 Sources 下的类自动链接
-                  window?.rootViewController = detectorVC
+                  window?.rootViewController = rootVC
                   window?.makeKeyAndVisible()
                   return true
               }
@@ -92,7 +87,7 @@ jobs:
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>NSCameraUsageDescription</key>
-              <string>需要摄像头权限来进行 YOLO 实时检测</string>
+              <string>需要摄像头权限进行实时 YOLO 检测</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
@@ -126,12 +121,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Fixed.ipa Payload
+          zip -r YOLO_Mobile_Final.ipa Payload
           mkdir -p output
-          mv YOLO_Fixed.ipa output/
+          mv YOLO_Mobile_Final.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA-Fixed
-          path: output/YOLO_Fixed.ipa
+          name: YOLO-IPA-Working
+          path: output/YOLO_Mobile_Final.ipa
