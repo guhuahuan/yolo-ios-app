@@ -17,9 +17,30 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Create Entry Point (AppMain.swift)
+        run: |
+          # 动态生成 App 入口点，解决 _main 缺失问题
+          cat <<EOF > AppMain.swift
+          import SwiftUI
+
+          @main
+          struct YOLOAppEntry: App {
+              var body: some Scene {
+                  WindowGroup {
+                      // 这里假设你的代码中有一个 YOLOView
+                      // 如果报错找不到 YOLOView，请确认你源码中的 View 类名
+                      if #available(iOS 16.0, *) {
+                          YOLOView()
+                      } else {
+                          Text("iOS 16+ Required")
+                      }
+                  }
+              }
+          }
+          EOF
+
       - name: Create Project Specification
         run: |
-          # 创建一个项目配置文件，告诉系统如何把你的代码编成 App
           cat <<EOF > project.yml
           name: YOLOApp
           options:
@@ -30,12 +51,15 @@ jobs:
               platform: iOS
               deploymentTarget: "16.0"
               sources: 
-                - path: Sources/YOLO # 指向你的源码路径
+                - path: Sources/YOLO # 你的库源码
+                - path: AppMain.swift # 我们刚生成的入口文件
               dependencies:
                 - package: ZIPFoundation
               settings:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
+                MARKETING_VERSION: "1.0"
+                CURRENT_PROJECT_VERSION: "1"
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
@@ -44,7 +68,6 @@ jobs:
 
       - name: Create Minimal Info.plist
         run: |
-          # 必须包含摄像头权限，否则 App 无法运行
           cat <<EOF > Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -75,7 +98,6 @@ jobs:
 
       - name: Build IPA
         run: |
-          # 编译生成的项目
           xcodebuild build \
             -project YOLOApp.xcodeproj \
             -scheme YOLOApp \
@@ -84,7 +106,8 @@ jobs:
             -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
       - name: Package IPA
         run: |
