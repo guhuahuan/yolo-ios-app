@@ -1,4 +1,4 @@
-name: Build YOLO IPA (Fixed Resource Conflict)
+name: Build YOLO IPA (Fixed Module Import)
 
 on:
   push:
@@ -21,14 +21,16 @@ jobs:
         run: |
           cat <<EOF > AppDelegate.swift
           import UIKit
-          import YOLO
           import SwiftUI
+          // 注意：不需要 import YOLO，因为文件都在同一个 Target 中
 
           @main
           class AppDelegate: UIResponder, UIApplicationDelegate {
               var window: UIWindow?
               func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   window = UIWindow(frame: UIScreen.main.bounds)
+                  
+                  // 直接使用 YOLOView，它在 Sources/YOLO 中定义
                   let vc = UIHostingController(rootView: YOLOView())
                   window?.rootViewController = vc
                   window?.makeKeyAndVisible()
@@ -50,16 +52,17 @@ jobs:
               deploymentTarget: "16.0"
               sources: 
                 - path: Sources/YOLO
-                  excludes: ["**/README.md"] # 排除冲突文件
+                  excludes: ["**/README.md"]
                 - path: AppDelegate.swift
                 - path: Tests/YOLOTests/Resources
-                  excludes: ["**/README.md"] # 排除冲突文件
+                  excludes: ["**/README.md"]
               dependencies:
                 - package: ZIPFoundation
               settings:
                 INFOPLIST_FILE: Info.plist
                 CODE_SIGNING_ALLOWED: NO
-                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo
+                # 显式添加 Swift 搜索路径和框架支持
+                OTHER_LDFLAGS: -framework CoreML -framework Vision -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework QuartzCore
           packages:
             ZIPFoundation:
               url: https://github.com/weichsel/ZIPFoundation.git
@@ -91,6 +94,11 @@ jobs:
               <string>LaunchScreen</string>
               <key>LSRequiresIPhoneOS</key>
               <true/>
+              <key>UIApplicationSceneManifest</key>
+              <dict>
+                  <key>UIApplicationSupportsMultipleScenes</key>
+                  <false/>
+              </dict>
           </dict>
           </plist>
           EOF
@@ -115,12 +123,16 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/YOLOApp.app Payload/
-          zip -r YOLO_Final.ipa Payload
+          
+          # 检查模型是否成功编译进 Bundle (mlmodelc)
+          find Payload/YOLOApp.app -name "*.mlmodelc"
+          
+          zip -r YOLO_Fixed.ipa Payload
           mkdir -p output
-          mv YOLO_Final.ipa output/
+          mv YOLO_Fixed.ipa output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-IPA
-          path: output/YOLO_Final.ipa
+          path: output/YOLO_Fixed.ipa
