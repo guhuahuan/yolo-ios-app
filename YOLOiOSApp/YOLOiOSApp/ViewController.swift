@@ -22,7 +22,7 @@ class ADASWarningManager {
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
         
         // 检查当前识别结果中是否有这些类别
-        let hasDanger = result.predictions.contains { prediction in
+        let hasDanger = result.boxes.contains { prediction in
             dangerLabels.contains(prediction.label.lowercased())
         }
         
