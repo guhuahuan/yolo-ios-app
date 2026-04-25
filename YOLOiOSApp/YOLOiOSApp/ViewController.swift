@@ -572,19 +572,15 @@ extension ViewController {
         }
     }
 
-    func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // 1. 获取当前帧（如果 YOLOView 能提供）
-    // 注意：如果你的 YOLOView 目前没有直接暴露 currentFrame，
-    // 可以暂时传入 nil，逻辑会自动退化到 ROI 模式，保证编译通过。
-    let currentFrame: CVPixelBuffer? = nil 
-
-    if let frame = currentFrame {
-        // 执行分割并传入结果
+   func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
+    // 闭环：从 YOLOView 实时获取刚处理完的那一帧硬件图像
+    if let frame = view.currentFrame {
         performSegmentation(on: frame) { mask in
+            // 带有语义分割掩码的增强预警逻辑
             ADASWarningManager.shared.processDetections(result, roadMask: mask)
         }
     } else {
-        // 如果没有帧，显式传入 nil 作为第二个参数
+        // 保底：若分割还没准备好，仅使用 ROI 判定
         ADASWarningManager.shared.processDetections(result, roadMask: nil)
     }
 
