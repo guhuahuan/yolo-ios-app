@@ -12,46 +12,49 @@ import UIKit
 import YOLO
 
 // MARK: - ADAS 报警管理器 (纯新增，不影响原有逻辑)
-// MARK: - ADAS 报警管理器 (升级版)
+// MARK: - ADAS 报警管理器
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
-    
-    // 核心逻辑：结合 YOLO 结果和 DeepLab 的分割掩码
-    func processDetections(_ result: YOLOResult, segmentationMask: CVPixelBuffer?) {
+    private var lastAlertTime: TimeInterval = 0
+
+    private let roiPoints: [CGPoint] = [
+        CGPoint(x: 0.30, y: 0.40), 
+        CGPoint(x: 0.70, y: 0.40), 
+        CGPoint(x: 0.95, y: 0.95), 
+        CGPoint(x: 0.05, y: 0.95)  
+    ]
+
+    func processDetections(_ result: YOLOResult) {
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
 
-        let hasUrgentDanger = result.boxes.contains { box in
-            let isTargetType = dangerLabels.contains(box.cls.lowercased())
-            let isHighConf = box.conf > 0.45
-            
-            // 如果有分割数据，进行位置校验
-            var isOnRoad = true 
-            if let mask = segmentationMask {
-                // 采样检测框底部中心点（物体落地位置）
-                let bottomPoint = CGPoint(x: box.xywh.midX, y: box.xywh.maxY)
-                isOnRoad = checkIsOnRoad(point: bottomPoint, in: mask)
+        // 绝对确认：使用你的项目中合法的 boxes 和 cls
+        let hasDanger = result.boxes.contains { box in
+            guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
+
+            // 计算边界框底边中心点
+            let rect = box.box
+            //let rect = box.box
+            let rect = box.xywh
+            let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
+
+            return isPointInPolygon(point: bottomCenter, polygon: roiPoints)
+        }
+
+        if hasDanger {
+            let now = Date().timeIntervalSince1970
+            if now - lastAlertTime > 1.2 {
+                lastAlertTime = now
+                DispatchQueue.main.async {
+                    self.haptic.prepare()
+                    self.haptic.impactOccurred()
+                    AudioServicesPlaySystemSound(1016)
+                    print("⚠️ ADAS 警告：车道内检测到风险")
+                }
             }
-
-            return isTargetType && isHighConf && isOnRoad
-        }
-
-        if hasUrgentDanger {
-            haptic.impactOccurred()
-            // 可以在这里根据危险程度调整震动频率
         }
     }
 
-    // 解析 DeepLabV3 输出的像素值（需要根据模型具体的 Class Index 调整）
-    private func checkIsOnRoad(point: CGPoint, in mask: CVPixelBuffer) -> Bool {
-        // 这里需要将图像坐标映射到 Mask 的像素坐标 (通常是 513x513)
-        // 判定该位置的类别索引是否对应 "Road"
-        // 提示：DeepLabV3 在 PASCAL VOC 中 Road 类别通常不是默认的，
-        // 你需要确认下载的模型类别映射表。
-        return true // 占位逻辑
-    }
-}
-    
     private func isPointInPolygon(point: CGPoint, polygon: [CGPoint]) -> Bool {
         var isInside = false
         var j = polygon.count - 1
@@ -65,7 +68,7 @@ class ADASWarningManager {
         }
         return isInside
     }
-
+}
 
 // MARK: - Extensions
 extension Result {
@@ -387,7 +390,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
                 ModelSelectionManager.updateSegmentAppearance(self.modelSegmentedControl, standardModels: self.standardModels, currentTask: yoloTask)
                 self.currentModelName = processString(modelName)
                 self.labelName.text = processString(modelName)
-                
+
                 var fullModelPath = ""
                 if let entry = self.currentLoadingEntry {
                     if entry.isLocalBundle, let folderURL = self.tasks.first(where: { $0.name == self.currentTask })?.folder,
@@ -514,51 +517,14 @@ extension ViewController {
         }
     }
 
-    // ... 这里是 didReceiveResult 的逻辑末尾
-
     func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-        // 尝试获取当前帧。如果 view.currentFrame 报错，
-        // 说明底层库没提供这个属性，我们可以尝试用更通用的 view.layer.contents
-        let pixelBuffer = view.currentFrame
-        
-        if let frame = pixelBuffer {
-            performSegmentation(on: frame) { mask in
-                ADASWarningManager.shared.processDetections(result, segmentationMask: mask)
-            }
-        } else {
-            ADASWarningManager.shared.processDetections(result, segmentationMask: nil)
-        }
+        // 【核心报警逻辑：注入调用】
+        ADASWarningManager.shared.processDetections(result)
 
         DispatchQueue.main.async { [weak self] in
+            guard self != nil else { return }
             ExternalDisplayManager.shared.shareResults(result)
-        }
-    }
-} // 闭合 YOLOViewDelegate 的 extension
-
-// MARK: - 语义分割逻辑扩展
-extension ViewController {
-    func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
-        // 确保模型存在且能初始化
-        guard let model = try? VNCoreMLModel(for: DeepLabV3(configuration: MLModelConfiguration()).model) else {
-            completion(nil)
-            return
-        }
-
-        let request = VNCoreMLRequest(model: model) { request, error in
-            if let results = request.results as? [VNPixelBufferObservation], 
-               let mask = results.first?.pixelBuffer {
-                completion(mask)
-            } else {
-                completion(nil)
-            }
-        }
-
-        request.imageCropAndScaleOption = .scaleFill
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
-        
-        // 异步执行分割，不阻塞主线程
-        DispatchQueue.global(qos: .userInteractive).async {
-            try? handler.perform([request])
+            NotificationCenter.default.post(name: .yoloResultsAvailable, object: nil, userInfo: ["result": result])
         }
     }
 }
