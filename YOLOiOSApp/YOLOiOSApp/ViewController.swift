@@ -33,7 +33,7 @@ class ADASWarningManager {
             guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
             
             // 计算边界框底边中心点
-            let rect = box.bounds
+            let rect = box.box
             let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
             
             return isPointInPolygon(point: bottomCenter, polygon: roiPoints)
