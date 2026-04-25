@@ -65,7 +65,7 @@ class ADASWarningManager {
         }
         return isInside
     }
-}
+
 
 // MARK: - Extensions
 extension Result {
