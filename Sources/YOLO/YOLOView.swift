@@ -29,6 +29,11 @@ public protocol YOLOViewDelegate: AnyObject {
 @MainActor
 public final class YOLOView: UIView, VideoCaptureDelegate {
 
+  /// 获取底层的原始图像帧，用于语义分割
+    public var currentFrame: CVPixelBuffer? {
+        return videoCapture.lastPixelBuffer
+    }
+
   /// Delegate object - Receives performance metrics and YOLO detection results
   public weak var delegate: YOLOViewDelegate?
 
