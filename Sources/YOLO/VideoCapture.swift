@@ -203,6 +203,9 @@ public final class VideoCapture: NSObject, @unchecked Sendable {
     guard let predictor = predictor else {
       return
     }
+    // 新增：在交给 YOLO 预测前，先存下这一帧
+    self.lastPixelBuffer = pixelBuffer
+    
     if currentBuffer == nil, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
       currentBuffer = pixelBuffer
       if !frameSizeCaptured {
