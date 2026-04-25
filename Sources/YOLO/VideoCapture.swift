@@ -72,6 +72,7 @@ public final class VideoCapture: NSObject, @unchecked Sendable {
   var frameSizeCaptured = false
 
   private var currentBuffer: CVPixelBuffer?
+  public var lastPixelBuffer: CVPixelBuffer?
 
   deinit {
     captureSession.stopRunning()
