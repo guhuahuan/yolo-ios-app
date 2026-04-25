@@ -127,6 +127,17 @@ extension Array {
 
 class ViewController: UIViewController, YOLOViewDelegate {
 
+    // 懒加载分割模型，确保只在第一次使用时加载一次进入内存
+    private lazy var deepLabModel: VNCoreMLModel? = {
+        guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc"),
+              let compiledModel = try? MLModel(contentsOf: modelURL),
+              let visionModel = try? VNCoreMLModel(for: compiledModel) else {
+            print("❌ 初始化失败：无法加载 DeepLabV3 模型")
+            return nil
+        }
+        return visionModel
+    }()
+    
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
         if SceneDelegate.hasExternalDisplay {
             return [.landscapeLeft, .landscapeRight]
