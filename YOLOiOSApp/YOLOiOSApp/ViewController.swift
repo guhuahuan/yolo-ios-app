@@ -530,21 +530,28 @@ extension ViewController {
 
 extension ViewController {
     func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
-        // 1. 初始化模型
-        guard let model = try? VNCoreMLModel(for: DeepLabV3(configuration: MLModelConfiguration()).model) else {
+        // 1. 手动从 Bundle 中寻找并加载模型 (mlmodelc)
+        guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc"),
+              let compiledModel = try? MLModel(contentsOf: modelURL),
+              let visionModel = try? VNCoreMLModel(for: compiledModel) else {
+            print("❌ 错误：在 Bundle 中找不到编译后的 DeepLabV3 模型")
             completion(nil)
             return
         }
 
         // 2. 创建请求
-        let request = VNCoreMLRequest(model: model) { request, error in
-            let mask = (request.results as? [VNPixelBufferObservation])?.first?.pixelBuffer
-            completion(mask)
+        let request = VNCoreMLRequest(model: visionModel) { request, error in
+            if let results = request.results as? [VNPixelBufferObservation] {
+                completion(results.first?.pixelBuffer)
+            } else {
+                completion(nil)
+            }
         }
 
-        request.imageCropAndScaleOption = .scaleFill
+        // 3. 显式指定枚举类型，解决推断报错
+        request.imageCropAndScaleOption = VNImageCropAndScaleOption.scaleFill
         
-        // 3. 执行请求
+        // 4. 执行请求
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
         DispatchQueue.global(qos: .userInteractive).async {
             try? handler.perform([request])
