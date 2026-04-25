@@ -527,3 +527,27 @@ extension ViewController {
         }
     }
 }
+
+extension ViewController {
+    func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
+        // 1. 初始化模型
+        guard let model = try? VNCoreMLModel(for: DeepLabV3(configuration: MLModelConfiguration()).model) else {
+            completion(nil)
+            return
+        }
+
+        // 2. 创建请求
+        let request = VNCoreMLRequest(model: model) { request, error in
+            let mask = (request.results as? [VNPixelBufferObservation])?.first?.pixelBuffer
+            completion(mask)
+        }
+
+        request.imageCropAndScaleOption = .scaleFill
+        
+        // 3. 执行请求
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        DispatchQueue.global(qos: .userInteractive).async {
+            try? handler.perform([request])
+        }
+    }
+}
