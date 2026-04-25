@@ -514,21 +514,51 @@ extension ViewController {
         }
     }
 
-    func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // 获取当前帧并进行分割处理
-    if let currentFrame = view.currentFrame { // 假设 YOLOView 能提供当前帧
-        performSegmentation(on: currentFrame) { mask in
-            // 只有拿到分割掩码后，才调用升级版的报警管理器
-            ADASWarningManager.shared.processDetections(result, segmentationMask: mask)
-        }
-    } else {
-        // 保底逻辑：如果分割还没跑完，先按原逻辑报警
-        ADASWarningManager.shared.processDetections(result, segmentationMask: nil)
-    }
+    // ... 这里是 didReceiveResult 的逻辑末尾
 
-    // 原有逻辑保持不变 [cite: 240]
-    DispatchQueue.main.async { [weak self] in
-        ExternalDisplayManager.shared.shareResults(result)
+    func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
+        // 尝试获取当前帧。如果 view.currentFrame 报错，
+        // 说明底层库没提供这个属性，我们可以尝试用更通用的 view.layer.contents
+        let pixelBuffer = view.currentFrame
+        
+        if let frame = pixelBuffer {
+            performSegmentation(on: frame) { mask in
+                ADASWarningManager.shared.processDetections(result, segmentationMask: mask)
+            }
+        } else {
+            ADASWarningManager.shared.processDetections(result, segmentationMask: nil)
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            ExternalDisplayManager.shared.shareResults(result)
+        }
+    }
+} // 闭合 YOLOViewDelegate 的 extension
+
+// MARK: - 语义分割逻辑扩展
+extension ViewController {
+    func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
+        // 确保模型存在且能初始化
+        guard let model = try? VNCoreMLModel(for: DeepLabV3(configuration: MLModelConfiguration()).model) else {
+            completion(nil)
+            return
+        }
+
+        let request = VNCoreMLRequest(model: model) { request, error in
+            if let results = request.results as? [VNPixelBufferObservation], 
+               let mask = results.first?.pixelBuffer {
+                completion(mask)
+            } else {
+                completion(nil)
+            }
+        }
+
+        request.imageCropAndScaleOption = .scaleFill
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        
+        // 异步执行分割，不阻塞主线程
+        DispatchQueue.global(qos: .userInteractive).async {
+            try? handler.perform([request])
+        }
     }
 }
-
