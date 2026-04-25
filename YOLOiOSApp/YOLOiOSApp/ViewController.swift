@@ -11,32 +11,61 @@ import CoreMedia
 import UIKit
 import YOLO
 
-// MARK: - ADAS 报警管理器 (纯新增，不影响原有逻辑)
+// MARK: - ADAS 报警管理器 (加入 ROI 过滤逻辑)
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
     private var lastAlertTime: TimeInterval = 0
     
+    // 定义危险区域（ROI）：一个覆盖前方车道的归一化梯形区域 (0.0 ~ 1.0)
+    private let roiPoints: [CGPoint] = [
+        CGPoint(x: 0.30, y: 0.40), // 左上
+        CGPoint(x: 0.70, y: 0.40), // 右上
+        CGPoint(x: 0.95, y: 0.95), // 右下
+        CGPoint(x: 0.05, y: 0.95)  // 左下
+    ]
+    
     func processDetections(_ result: YOLOResult) {
-        // 定义需要报警的类别
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
         
-        // 【已修正】：将 predictions 替换为 boxes，label 替换为 cls
-        // 建议加上置信度过滤 (conf > 0.45)，否则很容易误报
         let hasDanger = result.boxes.contains { box in
-            dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45
+            // 1. 基础过滤：类别匹配 + 置信度阈值
+            guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
+            
+            // 2. 空间过滤：计算目标底边中心点 (最接近地面的点)
+            let bottomCenter = CGPoint(x: box.rect.midX, y: box.rect.maxY)
+            
+            // 3. 区域判定：判断点是否在定义的梯形区域内
+            return isPointInPolygon(point: bottomCenter, polygon: roiPoints)
         }
         
         if hasDanger {
             let now = Date().timeIntervalSince1970
-            // 报警冷却时间：1秒，防止声音太嘈杂
-            if now - lastAlertTime > 1.0 {
-                haptic.prepare()
-                haptic.impactOccurred()
-                AudioServicesPlaySystemSound(1016) // 系统警示音
+            if now - lastAlertTime > 1.2 {
                 lastAlertTime = now
+                DispatchQueue.main.async {
+                    self.haptic.prepare()
+                    self.haptic.impactOccurred()
+                    AudioServicesPlaySystemSound(1016)
+                    print("⚠️ ADAS: 危险区域内检测到目标")
+                }
             }
         }
+    }
+    
+    // 射线法判定点是否在多边形内部
+    private func isPointInPolygon(point: CGPoint, polygon: [CGPoint]) -> Bool {
+        var isInside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            if (polygon[i].y < point.y && polygon[j].y >= point.y || polygon[j].y < point.y && polygon[i].y >= point.y) {
+                if (polygon[i].x + (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) * (polygon[j].x - polygon[i].x) < point.x) {
+                    isInside.toggle()
+                }
+            }
+            j = i
+        }
+        return isInside
     }
 }
 
