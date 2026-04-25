@@ -515,13 +515,20 @@ extension ViewController {
     }
 
     func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-        // 【核心报警逻辑：注入调用】
-        ADASWarningManager.shared.processDetections(result)
-        
-        DispatchQueue.main.async { [weak self] in
-            guard self != nil else { return }
-            ExternalDisplayManager.shared.shareResults(result)
-            NotificationCenter.default.post(name: .yoloResultsAvailable, object: nil, userInfo: ["result": result])
+    // 获取当前帧并进行分割处理
+    if let currentFrame = view.currentFrame { // 假设 YOLOView 能提供当前帧
+        performSegmentation(on: currentFrame) { mask in
+            // 只有拿到分割掩码后，才调用升级版的报警管理器
+            ADASWarningManager.shared.processDetections(result, segmentationMask: mask)
         }
+    } else {
+        // 保底逻辑：如果分割还没跑完，先按原逻辑报警
+        ADASWarningManager.shared.processDetections(result, segmentationMask: nil)
     }
+
+    // 原有逻辑保持不变 [cite: 240]
+    DispatchQueue.main.async { [weak self] in
+        ExternalDisplayManager.shared.shareResults(result)
+    }
+}
 }
