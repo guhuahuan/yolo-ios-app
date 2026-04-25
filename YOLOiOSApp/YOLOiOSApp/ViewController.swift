@@ -12,31 +12,59 @@ import UIKit
 import YOLO
 
 // MARK: - ADAS 报警管理器 (纯新增，不影响原有逻辑)
+// MARK: - ADAS 报警管理器
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
     private var lastAlertTime: TimeInterval = 0
     
+    private let roiPoints: [CGPoint] = [
+        CGPoint(x: 0.30, y: 0.40), 
+        CGPoint(x: 0.70, y: 0.40), 
+        CGPoint(x: 0.95, y: 0.95), 
+        CGPoint(x: 0.05, y: 0.95)  
+    ]
+    
     func processDetections(_ result: YOLOResult) {
-        // 定义需要报警的类别
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
         
-        // 【已修正】：将 predictions 替换为 boxes，label 替换为 cls
-        // 建议加上置信度过滤 (conf > 0.45)，否则很容易误报
+        // 绝对确认：使用你的项目中合法的 boxes 和 cls
         let hasDanger = result.boxes.contains { box in
-            dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45
+            guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
+            
+            // 计算边界框底边中心点
+            let rect = box.rect
+            let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
+            
+            return isPointInPolygon(point: bottomCenter, polygon: roiPoints)
         }
         
         if hasDanger {
             let now = Date().timeIntervalSince1970
-            // 报警冷却时间：1秒，防止声音太嘈杂
-            if now - lastAlertTime > 1.0 {
-                haptic.prepare()
-                haptic.impactOccurred()
-                AudioServicesPlaySystemSound(1016) // 系统警示音
+            if now - lastAlertTime > 1.2 {
                 lastAlertTime = now
+                DispatchQueue.main.async {
+                    self.haptic.prepare()
+                    self.haptic.impactOccurred()
+                    AudioServicesPlaySystemSound(1016)
+                    print("⚠️ ADAS 警告：车道内检测到风险")
+                }
             }
         }
+    }
+    
+    private func isPointInPolygon(point: CGPoint, polygon: [CGPoint]) -> Bool {
+        var isInside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            if (polygon[i].y < point.y && polygon[j].y >= point.y || polygon[j].y < point.y && polygon[i].y >= point.y) {
+                if (polygon[i].x + (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) * (polygon[j].x - polygon[i].x) < point.x) {
+                    isInside.toggle()
+                }
+            }
+            j = i
+        }
+        return isInside
     }
 }
 
