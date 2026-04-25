@@ -531,4 +531,4 @@ extension ViewController {
         ExternalDisplayManager.shared.shareResults(result)
     }
 }
-}
+
