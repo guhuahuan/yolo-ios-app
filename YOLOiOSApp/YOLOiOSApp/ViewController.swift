@@ -594,18 +594,15 @@ extension ViewController {
 }
 }
 
+// MARK: - 语义分割逻辑扩展
 extension ViewController {
     func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
-        // 1. 手动从 Bundle 中寻找并加载模型 (mlmodelc)
-        guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc"),
-              let compiledModel = try? MLModel(contentsOf: modelURL),
-              let visionModel = try? VNCoreMLModel(for: compiledModel) else {
-            print("❌ 错误：在 Bundle 中找不到编译后的 DeepLabV3 模型")
+        // 直接使用内存中已经加载好的模型
+        guard let visionModel = deepLabModel else {
             completion(nil)
             return
         }
 
-        // 2. 创建请求
         let request = VNCoreMLRequest(model: visionModel) { request, error in
             if let results = request.results as? [VNPixelBufferObservation] {
                 completion(results.first?.pixelBuffer)
@@ -614,10 +611,8 @@ extension ViewController {
             }
         }
 
-        // 3. 显式指定枚举类型，解决推断报错
         request.imageCropAndScaleOption = VNImageCropAndScaleOption.scaleFill
         
-        // 4. 执行请求
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
         DispatchQueue.global(qos: .userInteractive).async {
             try? handler.perform([request])
