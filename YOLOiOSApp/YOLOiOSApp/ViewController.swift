@@ -7,6 +7,7 @@
 import AVFoundation
 import AudioToolbox
 import CoreML
+import Vision
 import CoreMedia
 import UIKit
 import YOLO
