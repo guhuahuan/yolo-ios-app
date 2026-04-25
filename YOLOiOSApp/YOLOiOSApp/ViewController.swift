@@ -33,7 +33,7 @@ class ADASWarningManager {
             guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
             
             // 计算边界框底边中心点
-            let rect = box.rect
+            let rect = box.bounds
             let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
             
             return isPointInPolygon(point: bottomCenter, polygon: roiPoints)
@@ -498,7 +498,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
     private func debugCheckModelFolders() {
         let folders = ["Models/Detect", "Models/Segment", "Models/Classify", "Models/Pose", "Models/OBB"]
         for folder in folders {
-            if let folderURL = Bundle.main.url(forResource: folder, withExtension: nil) {
+            if Bundle.main.url(forResource: folder, withExtension: nil) != nil {
                 print("✅ \(folder) found")
             } else {
                 print("❌ \(folder) NOT FOUND")
