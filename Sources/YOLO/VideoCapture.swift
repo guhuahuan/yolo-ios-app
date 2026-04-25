@@ -203,7 +203,10 @@ public final class VideoCapture: NSObject, @unchecked Sendable {
     guard let predictor = predictor else {
       return
     }
-    // 新增：在交给 YOLO 预测前，先存下这一帧
+    // 1. 必须先通过这行代码从 sampleBuffer 提取出 pixelBuffer
+    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+    
+    // 2. 提取成功后，立即赋值给出口变量（确保这行在 guard 之后）
     self.lastPixelBuffer = pixelBuffer
     
     if currentBuffer == nil, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
