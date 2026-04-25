@@ -13,12 +13,12 @@ import UIKit
 import YOLO
 
 // MARK: - ADAS 报警管理器 (纯新增，不影响原有逻辑)
-// MARK: - ADAS 报警管理器
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
     private var lastAlertTime: TimeInterval = 0
 
+    // 预定义关注区域 (ROI)
     private let roiPoints: [CGPoint] = [
         CGPoint(x: 0.30, y: 0.40), 
         CGPoint(x: 0.70, y: 0.40), 
@@ -26,32 +26,77 @@ class ADASWarningManager {
         CGPoint(x: 0.05, y: 0.95)  
     ]
 
-    func processDetections(_ result: YOLOResult) {
+    // 升级：增加 roadMask 参数
+    func processDetections(_ result: YOLOResult, roadMask: CVPixelBuffer?) {
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
 
-        // 绝对确认：使用你的项目中合法的 boxes 和 cls
         let hasDanger = result.boxes.contains { box in
+            // 1. 过滤类别和置信度
             guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
 
-            // 计算边界框底边中心点
+            // 2. 获取目标底边中心点（接触地面点）
             let rect = box.xywh
             let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
 
-            return isPointInPolygon(point: bottomCenter, polygon: roiPoints)
+            // 3. 第一层判定：是否在 ROI 多边形内
+            let inROI = isPointInPolygon(point: bottomCenter, polygon: roiPoints)
+            
+            // 如果不在 ROI 内，直接排除
+            if !inROI { return false }
+
+            // 4. 第二层判定：如果有分割掩码，确认该点是否在“路面”上
+            if let mask = roadMask {
+                return checkPointIsRoad(point: bottomCenter, in: mask)
+            }
+
+            // 如果没有拿到 mask（比如模型还在初始化），则退化到仅靠 ROI 判定
+            return true
         }
 
         if hasDanger {
-            let now = Date().timeIntervalSince1970
-            if now - lastAlertTime > 1.2 {
-                lastAlertTime = now
-                DispatchQueue.main.async {
-                    self.haptic.prepare()
-                    self.haptic.impactOccurred()
-                    AudioServicesPlaySystemSound(1016)
-                    print("⚠️ ADAS 警告：车道内检测到风险")
-                }
+            triggerWarning()
+        }
+    }
+
+    // 执行警告动作
+    private func triggerWarning() {
+        let now = Date().timeIntervalSince1970
+        if now - lastAlertTime > 1.2 {
+            lastAlertTime = now
+            DispatchQueue.main.async {
+                self.haptic.prepare()
+                self.haptic.impactOccurred()
+                AudioServicesPlaySystemSound(1016)
+                print("⚠️ ADAS 警告：车道内检测到风险")
             }
         }
+    }
+
+    // 读取 PixelBuffer 像素值判断是否为路面
+    private func checkPointIsRoad(point: CGPoint, in mask: CVPixelBuffer) -> Bool {
+        CVPixelBufferLockBaseAddress(mask, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+
+        let width = CVPixelBufferGetWidth(mask)
+        let height = CVPixelBufferGetHeight(mask)
+
+        // 转换归一化坐标到像素坐标
+        let x = Int(point.x * CGFloat(width))
+        let y = Int(point.y * CGFloat(height))
+
+        guard x >= 0 && x < width && y >= 0 && y < height else { return false }
+
+        if let baseAddress = CVPixelBufferGetBaseAddress(mask) {
+            let byteBuffer = baseAddress.assumingMemoryBound(to: UInt8.self)
+            let index = y * width + x
+            let pixelValue = byteBuffer[index]
+            
+            // DeepLabV3 的结果中，像素值通常代表类别索引
+            // 在标准 Cityscapes 训练集中，Road 通常是索引 0 或某些处理后为 > 0
+            // 如果你发现误报过多或不报，可以打印 pixelValue 调试
+            return pixelValue > 0 
+        }
+        return false
     }
 
     private func isPointInPolygon(point: CGPoint, polygon: [CGPoint]) -> Bool {
