@@ -11,6 +11,7 @@ import Vision
 import CoreMedia
 import UIKit
 import YOLO
+import CoreVideo
 
 // MARK: - ADAS 报警管理器 (纯新增，不影响原有逻辑)
 class ADASWarningManager {
@@ -638,3 +639,13 @@ extension ViewController {
         }
     }
 }
+
+extension UIImage {
+    public convenience init?(pixelBuffer: CVPixelBuffer) {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let context = CIContext(options: nil)
+        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+        self.init(cgImage: cgImage)
+    }
+}
+
