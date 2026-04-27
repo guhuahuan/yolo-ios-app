@@ -300,6 +300,10 @@ class ViewController: UIViewController, YOLOViewDelegate {
                 self.downloadProgressLabel.text = "Downloading \(percentage)%"
             }
         }
+        // --- 在函数末尾加入这两行 ---
+        view.addSubview(roadMaskImageView)
+        roadMaskImageView.frame = view.bounds
+        // -------------------------
     }
 
     override func viewWillAppear(_ animated: Bool) {
