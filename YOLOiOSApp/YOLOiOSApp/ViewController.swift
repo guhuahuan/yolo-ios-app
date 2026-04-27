@@ -160,6 +160,15 @@ class ViewController: UIViewController, YOLOViewDelegate {
     @IBOutlet weak var logoImage: UIImageView!
 
     // --- 在这里插入 ---
+    // 粘贴这段模型初始化代码
+    private var segmentationModel: VNCoreMLModel? = {
+        // 这里会寻找你工程里的 DeepLabV3.mlmodelc 文件
+        guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc"),
+              let model = try? VNCoreMLModel(for: MLModel(contentsOf: modelURL)) else {
+            return nil
+        }
+        return model
+    }()
     // 在类顶部定义区
     private lazy var roadMaskImageView: UIImageView = {
         let iv = UIImageView()
@@ -632,23 +641,28 @@ extension ViewController {
 // MARK: - 语义分割逻辑扩展
 extension ViewController {
     func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
-        // 直接使用内存中已经加载好的模型
         guard let visionModel = deepLabModel else {
             completion(nil)
             return
         }
-
+    
         let request = VNCoreMLRequest(model: visionModel) { request, error in
-            if let results = request.results as? [VNPixelBufferObservation] {
-                completion(results.first?.pixelBuffer)
+            // 改进点：使用 FeatureValueObservation 提取 MultiArray
+            if let observations = request.results as? [VNCoreMLFeatureValueObservation],
+               let multiArray = observations.first?.featureValue.multiArrayValue {
+                // 将识别到的结果转换为像素图返回
+                completion(multiArray.pixelBuffer)
             } else {
+                // 如果还是 nil，这里就是你看到的“红屏”原因
                 completion(nil)
             }
         }
-
-        request.imageCropAndScaleOption = VNImageCropAndScaleOption.scaleFill
+    
+        // 工业环境推荐使用 .centerCrop 保持画面中心不畸变
+        request.imageCropAndScaleOption = .centerCrop
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        // 保持异步执行，不阻塞主线程
         DispatchQueue.global(qos: .userInteractive).async {
             try? handler.perform([request])
         }
