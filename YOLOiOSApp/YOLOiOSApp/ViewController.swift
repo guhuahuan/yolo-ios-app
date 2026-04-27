@@ -140,15 +140,17 @@ class ViewController: UIViewController, YOLOViewDelegate {
         let config = MLModelConfiguration()
         let modelWrapper = try DeepLabV3(configuration: config)
         let vnModel = try VNCoreMLModel(for: modelWrapper.model)
+        let outputName = vnModel.model.modelDescription.outputDescriptionsByName.keys.first
         
         // UI 更新必须在主线程
         DispatchQueue.main.async {
-            self.debugStatusLabel.text = " ✅ 模型加载成功\n [模型]: DeepLabV3\n [状态]: 待命"
+            //self.debugStatusLabel.text = " ✅ 模型加载成功\n [模型]: DeepLabV3\n [状态]: 待命"
+            self.debugStatusLabel.text = " ✅ 加载成功\n [模型]: DeepLabV3\n [输出节点]: \(outputName)"
             self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2)
             // 打印输出的名字和形状
-            if let outputName = vnModel.model.modelDescription.outputDescriptionsByName.keys.first {
-                self.debugStatusLabel.text = " ✅ 加载成功\n [模型]: DeepLabV3\n [输出节点]: \(outputName)"
-            }
+            
+                
+            
         }
         return vnModel
     } catch {
