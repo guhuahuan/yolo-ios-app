@@ -130,14 +130,25 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     // 懒加载分割模型，确保只在第一次使用时加载一次进入内存
     private lazy var deepLabModel: VNCoreMLModel? = {
-        guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc"),
-              let compiledModel = try? MLModel(contentsOf: modelURL),
-              let visionModel = try? VNCoreMLModel(for: compiledModel) else {
-            print("❌ 初始化失败：无法加载 DeepLabV3 模型")
-            return nil
-        }
-        return visionModel
-    }()
+    // 尝试在 Models 文件夹下寻找模型
+    // 这里的 path 要对应你工程里的实际资源路径
+    guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc") ?? 
+                         Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc", subdirectory: "Models") else {
+        // 信号：橙色 -> 依然找不到文件
+        DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .orange.withAlphaComponent(0.5) }
+        return nil
+    }
+    
+    guard let model = try? VNCoreMLModel(for: MLModel(contentsOf: modelURL)) else {
+        // 信号：棕色 -> 找到文件但加载失败
+        DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5) }
+        return nil
+    }
+    
+    // 信号：蓝色 -> 终于加载成功了！
+    DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2) }
+    return model
+}()
     
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
         if SceneDelegate.hasExternalDisplay {
