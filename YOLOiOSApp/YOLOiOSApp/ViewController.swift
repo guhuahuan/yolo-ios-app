@@ -572,34 +572,31 @@ extension ViewController {
         }
     }
 
-   func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    // 闭环：从 YOLOView 实时获取刚处理完的那一帧硬件图像
-       if let mask = view.currentFrame {
-        performSegmentation(on: mask) { roadMask in
-            // 调试：直接把路面 mask 变成半透明图片贴在屏幕上
-            DispatchQueue.main.async {
-                self.debugImageView.image = UIImage(pixelBuffer: roadMask)
-                self.debugImageView.alpha = 0.4
+    func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
+        if let frame = view.currentFrame {
+            performSegmentation(on: frame) { [weak self] mask in
+                // --- 新增：视觉显示逻辑 ---
+                if let roadMask = mask {
+                    DispatchQueue.main.async {
+                        // 将路面掩码显示在屏幕上，实现你发的那张图的效果
+                        // 注意：确保你已经在类顶部定义了 roadMaskImageView
+                        self?.roadMaskImageView.image = UIImage(pixelBuffer: roadMask)
+                    }
+                }
+                // -----------------------
+
+                // 带有语义分割掩码的增强预警逻辑（你原有的逻辑）
+                ADASWarningManager.shared.processDetections(result, roadMask: mask)
             }
-            ADASWarningManager.shared.processDetections(result, roadMask: roadMask)
+        } else {
+            // 保底：若分割还没准备好，仅使用 ROI 判定
+            ADASWarningManager.shared.processDetections(result, roadMask: nil)
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            ExternalDisplayManager.shared.shareResults(result)
         }
     }
-       
-    if let frame = view.currentFrame {
-        performSegmentation(on: frame) { mask in
-            // 带有语义分割掩码的增强预警逻辑
-            ADASWarningManager.shared.processDetections(result, roadMask: mask)
-        }
-    } else {
-        // 保底：若分割还没准备好，仅使用 ROI 判定
-        ADASWarningManager.shared.processDetections(result, roadMask: nil)
-    }
-
-
-    DispatchQueue.main.async { [weak self] in
-        ExternalDisplayManager.shared.shareResults(result)
-    }
-}
 }
 
 // MARK: - 语义分割逻辑扩展
