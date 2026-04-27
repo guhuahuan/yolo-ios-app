@@ -162,7 +162,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
     // --- 在这里插入 ---
     private lazy var roadMaskImageView: UIImageView = {
         let iv = UIImageView()
-        iv.contentMode = .scaleFill
+        iv.contentMode = .scaleToFill
         iv.alpha = 0.4
         iv.isUserInteractionEnabled = false // 确保不影响你点击屏幕上的按钮
         return iv
