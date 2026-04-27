@@ -160,11 +160,14 @@ class ViewController: UIViewController, YOLOViewDelegate {
     @IBOutlet weak var logoImage: UIImageView!
 
     // --- 在这里插入 ---
+    // 在类顶部定义区
     private lazy var roadMaskImageView: UIImageView = {
         let iv = UIImageView()
         iv.contentMode = .scaleToFill
-        iv.alpha = 0.4
-        iv.isUserInteractionEnabled = false // 确保不影响你点击屏幕上的按钮
+        iv.alpha = 0.5
+        // 工业调试小技巧：先给它一个背景色，用来确认它是否存在
+        iv.backgroundColor = UIColor.green.withAlphaComponent(0.2) 
+        iv.isUserInteractionEnabled = false 
         return iv
     }()
     // ----------------
@@ -305,6 +308,16 @@ class ViewController: UIViewController, YOLOViewDelegate {
         view.addSubview(roadMaskImageView)
         roadMaskImageView.frame = view.bounds
         // -------------------------
+        // 强制添加到最顶层
+        view.addSubview(roadMaskImageView)
+        view.bringSubviewToFront(roadMaskImageView)
+    }
+
+    // 还要处理屏幕旋转，确保 Mask 始终填满
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 每次布局变化（转屏）时，强行同步大小
+        roadMaskImageView.frame = view.bounds
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -588,30 +601,35 @@ extension ViewController {
     }
 
     func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-        if let frame = view.currentFrame {
-            performSegmentation(on: frame) { [weak self] mask in
-                // --- 新增：视觉显示逻辑 ---
-                if let roadMask = mask {
-                    DispatchQueue.main.async {
-                        // 将路面掩码显示在屏幕上，实现你发的那张图的效果
-                        // 注意：确保你已经在类顶部定义了 roadMaskImageView
-                        self?.roadMaskImageView.image = UIImage(pixelBuffer: roadMask)
-                    }
+    if let frame = view.currentFrame {
+        performSegmentation(on: frame) { [weak self] mask in
+            guard let self = self else { return }
+            
+            if let roadMask = mask {
+                DispatchQueue.main.async {
+                    // 更新图片
+                    self.roadMaskImageView.image = UIImage(pixelBuffer: roadMask)
+                    // 调试：如果拿到了 mask，把背景变紫，没拿到就变红
+                    self.roadMaskImageView.backgroundColor = UIColor.purple.withAlphaComponent(0.3)
                 }
-                // -----------------------
-
-                // 带有语义分割掩码的增强预警逻辑（你原有的逻辑）
-                ADASWarningManager.shared.processDetections(result, roadMask: mask)
+            } else {
+                DispatchQueue.main.async {
+                    // 如果 mask 是 nil，背景变红报错
+                    self.roadMaskImageView.backgroundColor = UIColor.red.withAlphaComponent(0.3)
+                }
             }
-        } else {
-            // 保底：若分割还没准备好，仅使用 ROI 判定
-            ADASWarningManager.shared.processDetections(result, roadMask: nil)
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            ExternalDisplayManager.shared.shareResults(result)
+            
+            // 传给预警管理器
+            ADASWarningManager.shared.processDetections(result, roadMask: mask)
         }
     }
+    
+    DispatchQueue.main.async { [weak self] in
+        ExternalDisplayManager.shared.shareResults(result)
+    }
+}
+    
+    
 }
 
 // MARK: - 语义分割逻辑扩展
