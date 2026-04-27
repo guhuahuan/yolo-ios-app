@@ -313,13 +313,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
         view.bringSubviewToFront(roadMaskImageView)
     }
 
-    // 还要处理屏幕旋转，确保 Mask 始终填满
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        // 每次布局变化（转屏）时，强行同步大小
-        roadMaskImageView.frame = view.bounds
-    }
-
+  
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         view.overrideUserInterfaceStyle = .dark
@@ -558,6 +552,9 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // --- 确保这一行在函数里面即可 ---
+        roadMaskImageView.frame = view.bounds
+        // ----------------------------
         adjustLayoutForExternalDisplayIfNeeded()
     }
 
