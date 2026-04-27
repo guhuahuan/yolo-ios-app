@@ -130,29 +130,17 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     // 懒加载分割模型，确保只在第一次使用时加载一次进入内存
     private lazy var deepLabModel: VNCoreMLModel? = {
-    // 1. 寻找原始的未编译文件（注意这里去掉了 'c'，只找 .mlmodel）
-    let rawModelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodel", subdirectory: "Models") ?? 
-                      Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodel")
-    
-    guard let url = rawModelURL else {
-        // 如果变成橙色，说明连原始的 .mlmodel 文件都没打进 App 包里
-        DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .orange.withAlphaComponent(0.5) }
-        return nil
-    }
-    
     do {
-        // 2. 核心黑科技：在 iPhone 运行时动态编译模型！
-        let compiledUrl = try MLModel.compileModel(at: url)
+        // 直接使用 Xcode 编译生成的类
+        let config = MLModelConfiguration()
+        let modelWrapper = try DeepLabV3(configuration: config)
+        let vnModel = try VNCoreMLModel(for: modelWrapper.model)
         
-        // 3. 加载刚刚在手机上编译好的模型
-        let mlModel = try MLModel(contentsOf: compiledUrl)
-        let vnModel = try VNCoreMLModel(for: mlModel)
-        
-        // 如果变成蓝色，说明手机端动态编译并加载成功！
+        // 🔵 蓝色灯：说明模型对象创建成功
         DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2) }
         return vnModel
     } catch {
-        // 如果变成棕色，说明找到了文件，但 iPhone 无法编译它（模型可能损坏或格式不支持）
+        // 🟫 棕色灯：说明模型类虽然存在，但初始化失败（可能是内存或版本问题）
         DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5) }
         return nil
     }
