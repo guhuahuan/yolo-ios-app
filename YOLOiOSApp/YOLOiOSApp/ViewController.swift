@@ -75,30 +75,35 @@ class ADASWarningManager {
 
     // 读取 PixelBuffer 像素值判断是否为路面
     private func checkPointIsRoad(point: CGPoint, in mask: CVPixelBuffer) -> Bool {
-        CVPixelBufferLockBaseAddress(mask, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+    CVPixelBufferLockBaseAddress(mask, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
 
-        let width = CVPixelBufferGetWidth(mask)
-        let height = CVPixelBufferGetHeight(mask)
+    let width = CVPixelBufferGetWidth(mask)
+    let height = CVPixelBufferGetHeight(mask)
 
-        // 转换归一化坐标到像素坐标
-        let x = Int(point.x * CGFloat(width))
-        let y = Int(point.y * CGFloat(height))
+    let x = Int(point.x * CGFloat(width))
+    let y = Int(point.y * CGFloat(height))
 
-        guard x >= 0 && x < width && y >= 0 && y < height else { return false }
+    guard x >= 0 && x < width && y >= 0 && y < height else { return false }
 
-        if let baseAddress = CVPixelBufferGetBaseAddress(mask) {
-            let byteBuffer = baseAddress.assumingMemoryBound(to: UInt8.self)
-            let index = y * width + x
-            let pixelValue = byteBuffer[index]
-            
-            // DeepLabV3 的结果中，像素值通常代表类别索引
-            // 在标准 Cityscapes 训练集中，Road 通常是索引 0 或某些处理后为 > 0
-            // 如果你发现误报过多或不报，可以打印 pixelValue 调试
-            return pixelValue > 0 
+    if let baseAddress = CVPixelBufferGetBaseAddress(mask) {
+        let byteBuffer = baseAddress.assumingMemoryBound(to: UInt8.self)
+        let index = y * width + x
+        let pixelValue = byteBuffer[index]
+        
+        // --- 修改部分：将数值实时同步到屏幕标签 ---
+        DispatchQueue.main.async {
+            // 获取当前的 ViewController 实例来更新 UI
+            if let vc = UIApplication.shared.windows.first?.rootViewController as? ViewController {
+                vc.updateDebugLabel(with: pixelValue)
+            }
         }
-        return false
+        
+        // 调试建议：先保持 > 0，观察路面到底是多少，然后再改回 == 7
+        return pixelValue > 0 
     }
+    return false
+}
 
     private func isPointInPolygon(point: CGPoint, polygon: [CGPoint]) -> Bool {
         var isInside = false
