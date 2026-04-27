@@ -13,7 +13,7 @@ import UIKit
 import YOLO
 import CoreVideo
 
-// MARK: - ADAS 报警管理器 (纯新增，不影响原有逻辑)
+// MARK: - ADAS 报警管理器
 class ADASWarningManager {
     static let shared = ADASWarningManager()
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
@@ -27,7 +27,6 @@ class ADASWarningManager {
         CGPoint(x: 0.05, y: 0.95)  
     ]
 
-    // 升级：增加 roadMask 参数
     func processDetections(_ result: YOLOResult, roadMask: CVPixelBuffer?) {
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
 
@@ -41,8 +40,6 @@ class ADASWarningManager {
 
             // 3. 第一层判定：是否在 ROI 多边形内
             let inROI = isPointInPolygon(point: bottomCenter, polygon: roiPoints)
-            
-            // 如果不在 ROI 内，直接排除
             if !inROI { return false }
 
             // 4. 第二层判定：如果有分割掩码，确认该点是否在“路面”上
@@ -59,7 +56,6 @@ class ADASWarningManager {
         }
     }
 
-    // 执行警告动作
     private func triggerWarning() {
         let now = Date().timeIntervalSince1970
         if now - lastAlertTime > 1.2 {
@@ -73,37 +69,37 @@ class ADASWarningManager {
         }
     }
 
-    // 读取 PixelBuffer 像素值判断是否为路面
     private func checkPointIsRoad(point: CGPoint, in mask: CVPixelBuffer) -> Bool {
-    CVPixelBufferLockBaseAddress(mask, .readOnly)
-    defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+        CVPixelBufferLockBaseAddress(mask, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
 
-    let width = CVPixelBufferGetWidth(mask)
-    let height = CVPixelBufferGetHeight(mask)
+        let width = CVPixelBufferGetWidth(mask)
+        let height = CVPixelBufferGetHeight(mask)
 
-    let x = Int(point.x * CGFloat(width))
-    let y = Int(point.y * CGFloat(height))
+        let x = Int(point.x * CGFloat(width))
+        let y = Int(point.y * CGFloat(height))
 
-    guard x >= 0 && x < width && y >= 0 && y < height else { return false }
+        guard x >= 0 && x < width && y >= 0 && y < height else { return false }
 
-    if let baseAddress = CVPixelBufferGetBaseAddress(mask) {
-        let byteBuffer = baseAddress.assumingMemoryBound(to: UInt8.self)
-        let index = y * width + x
-        let pixelValue = byteBuffer[index]
-        
-        // --- 修改部分：将数值实时同步到屏幕标签 ---
-        DispatchQueue.main.async {
-            // 获取当前的 ViewController 实例来更新 UI
-            if let vc = UIApplication.shared.windows.first?.rootViewController as? ViewController {
-                vc.updateDebugLabel(with: pixelValue)
+        if let baseAddress = CVPixelBufferGetBaseAddress(mask) {
+            let byteBuffer = baseAddress.assumingMemoryBound(to: UInt8.self)
+            let index = y * width + x
+            let pixelValue = byteBuffer[index]
+            
+            // 将数值实时同步到屏幕标签
+            DispatchQueue.main.async {
+                // 兼容旧版本 iOS 的安全获取方式
+                let window = UIApplication.shared.windows.first { $0.isKeyWindow } ?? UIApplication.shared.windows.first
+                if let vc = window?.rootViewController as? ViewController {
+                    vc.updateDebugLabel(with: pixelValue)
+                }
             }
+            
+            // 调试建议：先保持 > 0，观察路面到底是多少，然后再改回 == 7
+            return pixelValue > 0 
         }
-        
-        // 调试建议：先保持 > 0，观察路面到底是多少，然后再改回 == 7
-        return pixelValue > 0 
+        return false
     }
-    return false
-}
 
     private func isPointInPolygon(point: CGPoint, polygon: [CGPoint]) -> Bool {
         var isInside = false
@@ -134,34 +130,28 @@ extension Array {
 class ViewController: UIViewController, YOLOViewDelegate {
 
     // 懒加载分割模型，确保只在第一次使用时加载一次进入内存
-   private lazy var deepLabModel: VNCoreMLModel? = {
-    do {
-        // 使用 Xcode 自动生成的类加载模型
-        let config = MLModelConfiguration()
-        let modelWrapper = try DeepLabV3(configuration: config)
-        let vnModel = try VNCoreMLModel(for: modelWrapper.model)
-        let outputName = vnModel.model.modelDescription.outputDescriptionsByName.keys.first
-        
-        // UI 更新必须在主线程
-        DispatchQueue.main.async {
-            //self.debugStatusLabel.text = " ✅ 模型加载成功\n [模型]: DeepLabV3\n [状态]: 待命"
-            self.debugStatusLabel.text = " ✅ 加载成功\n [模型]: DeepLabV3\n [输出节点]: \(outputName)"
-            self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2)
-            // 打印输出的名字和形状
+    private lazy var deepLabModel: VNCoreMLModel? = {
+        do {
+            let config = MLModelConfiguration()
+            let modelWrapper = try DeepLabV3(configuration: config)
+            let vnModel = try VNCoreMLModel(for: modelWrapper.model)
             
-                
+            // ✅ 修复点：直接从 modelWrapper.model 获取描述，避免 VNCoreMLModel 无此属性的报错
+            let outputName = modelWrapper.model.modelDescription.outputDescriptionsByName.keys.first ?? "Unknown"
             
+            DispatchQueue.main.async {
+                self.debugStatusLabel.text = " ✅ 加载成功\n [模型]: DeepLabV3\n [输出节点]: \(outputName)"
+                self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2)
+            }
+            return vnModel
+        } catch {
+            DispatchQueue.main.async {
+                self.debugStatusLabel.text = " ❌ 加载失败\n [错误]: \(error.localizedDescription)"
+                self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5)
+            }
+            return nil
         }
-        return vnModel
-    } catch {
-        DispatchQueue.main.async {
-            // 如果加载失败，直接打印具体的错误原因
-            self.debugStatusLabel.text = " ❌ 加载失败\n [错误]: \(error.localizedDescription)"
-            self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5)
-        }
-        return nil
-    }
-}()
+    }()
     
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
         if SceneDelegate.hasExternalDisplay {
@@ -195,27 +185,15 @@ class ViewController: UIViewController, YOLOViewDelegate {
         return label
     }()
     
-    // --- 在这里插入 ---
-    // 粘贴这段模型初始化代码
-    private var segmentationModel: VNCoreMLModel? = {
-        // 这里会寻找你工程里的 DeepLabV3.mlmodelc 文件
-        guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc"),
-              let model = try? VNCoreMLModel(for: MLModel(contentsOf: modelURL)) else {
-            return nil
-        }
-        return model
-    }()
-    // 在类顶部定义区
+    // 用于显示分割结果的图层
     private lazy var roadMaskImageView: UIImageView = {
         let iv = UIImageView()
         iv.contentMode = .scaleToFill
         iv.alpha = 0.5
-        // 工业调试小技巧：先给它一个背景色，用来确认它是否存在
         iv.backgroundColor = UIColor.green.withAlphaComponent(0.2) 
         iv.isUserInteractionEnabled = false 
         return iv
     }()
-    // ----------------
     
     let selection = UISelectionFeedbackGenerator()
     var currentLoadingEntry: ModelEntry?
@@ -279,7 +257,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // 将调试标签添加到主视图的最顶层
+        
         view.addSubview(debugStatusLabel)
         debugStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -288,6 +266,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
             debugStatusLabel.widthAnchor.constraint(equalToConstant: 220),
             debugStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
         ])
+        
         debugCheckModelFolders()
         setupExternalDisplayNotifications()
         checkForExternalDisplays()
@@ -358,16 +337,13 @@ class ViewController: UIViewController, YOLOViewDelegate {
                 self.downloadProgressLabel.text = "Downloading \(percentage)%"
             }
         }
-        // --- 在函数末尾加入这两行 ---
-        view.addSubview(roadMaskImageView)
-        roadMaskImageView.frame = view.bounds
-        // -------------------------
+        
         // 强制添加到最顶层
         view.addSubview(roadMaskImageView)
         view.bringSubviewToFront(roadMaskImageView)
+        view.bringSubviewToFront(debugStatusLabel)
     }
 
-  
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         view.overrideUserInterfaceStyle = .dark
@@ -606,9 +582,7 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // --- 确保这一行在函数里面即可 ---
         roadMaskImageView.frame = view.bounds
-        // ----------------------------
         adjustLayoutForExternalDisplayIfNeeded()
     }
 
@@ -619,17 +593,15 @@ class ViewController: UIViewController, YOLOViewDelegate {
         formatter.dateFormat = "HH:mm:ss"
         let timeString = formatter.string(from: now)
         
-        // 使用主线程更新 UI
         DispatchQueue.main.async {
             self.debugStatusLabel.text = """
              ✅ 模型运行中
-             [更新]: \(timeString)
-             [当前路面像素值]: \(pixelValue)
-             [提示]: 如果路面显示 7，请将代码改为 == 7
+             [时间]: \(timeString)
+             [路面识别值]: \(pixelValue)
+             [目标]: 观察此值修改预警代码
             """
         }
     }
-    
 
     @objc func shareButtonTapped() {
         selection.selectionChanged()
@@ -677,12 +649,9 @@ extension ViewController {
                 
                 DispatchQueue.main.async {
                     if let roadMask = mask {
-                        // 1. 渲染真实的分割图
                         self.roadMaskImageView.image = UIImage(pixelBuffer: roadMask)
-                        // 2. 清除背景色，否则会干扰视觉
                         self.roadMaskImageView.backgroundColor = .clear 
                     } else {
-                        // 只有失败时才显示红色背景警告
                         self.roadMaskImageView.image = nil
                         self.roadMaskImageView.backgroundColor = UIColor.red.withAlphaComponent(0.2)
                     }
@@ -692,12 +661,10 @@ extension ViewController {
             }
         }
     
-        DispatchQueue.main.async { [weak self] in
-        ExternalDisplayManager.shared.shareResults(result)
+        DispatchQueue.main.async {
+            ExternalDisplayManager.shared.shareResults(result)
+        }
     }
-}
-    
-    
 }
 
 // MARK: - 语义分割逻辑扩展
@@ -711,41 +678,25 @@ extension ViewController {
         let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
             guard let self = self else { return }
             
-            // --- 新增：实时打印加载/工作情况 ---
-            DispatchQueue.main.async {
-                let now = Date()
-                let formatter = DateFormatter()
-                formatter.dateFormat = "HH:mm:ss"
-                let timeString = formatter.string(from: now)
-                
-                if let err = error {
-                    self.debugStatusLabel.text = " ❌ 推理出错\n [错误]: \(err.localizedDescription)\n [时间]: \(timeString)"
-                } else {
-                    // 只要模型在跑，这里的时间就会实时跳动
-                    self.debugStatusLabel.text = """
-                     ✅ 模型运行中
-                     [模型]: DeepLabV3
-                     [更新]: \(timeString)
-                     [状态]: 正在实时分割道路
-                    """
+            if let err = error {
+                DispatchQueue.main.async {
+                    self.debugStatusLabel.text = " ❌ 推理出错\n [错误]: \(err.localizedDescription)"
                 }
+                completion(nil)
+                return
             }
-            // --------------------------------
 
-            // 1. 尝试获取像素缓冲区输出 (VNPixelBufferObservation)
+            // 1. 尝试获取像素缓冲区输出
             if let results = request.results as? [VNPixelBufferObservation], 
                let buffer = results.first?.pixelBuffer {
-                DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .purple.withAlphaComponent(0.2) }
                 completion(buffer)
             } 
-            // 2. 尝试获取多维数组输出 (VNCoreMLFeatureValueObservation)
+            // 2. 尝试获取多维数组输出
             else if let results = request.results as? [VNCoreMLFeatureValueObservation], 
                       let multiArray = results.first?.featureValue.multiArrayValue {
-                DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .purple.withAlphaComponent(0.2) }
                 completion(multiArray.pixelBuffer) 
             } 
             else {
-                DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .red.withAlphaComponent(0.2) }
                 completion(nil)
             }
         }
@@ -766,4 +717,3 @@ extension UIImage {
         self.init(cgImage: cgImage)
     }
 }
-
