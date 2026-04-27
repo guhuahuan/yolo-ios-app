@@ -129,19 +129,25 @@ extension Array {
 class ViewController: UIViewController, YOLOViewDelegate {
 
     // 懒加载分割模型，确保只在第一次使用时加载一次进入内存
-    private lazy var deepLabModel: VNCoreMLModel? = {
+   private lazy var deepLabModel: VNCoreMLModel? = {
     do {
-        // 直接使用 Xcode 编译生成的类
+        // 使用 Xcode 自动生成的类加载模型
         let config = MLModelConfiguration()
         let modelWrapper = try DeepLabV3(configuration: config)
         let vnModel = try VNCoreMLModel(for: modelWrapper.model)
         
-        // 🔵 蓝色灯：说明模型对象创建成功
-        DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2) }
+        // UI 更新必须在主线程
+        DispatchQueue.main.async {
+            self.debugStatusLabel.text = " ✅ 模型加载成功\n [模型]: DeepLabV3\n [状态]: 待命"
+            self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2)
+        }
         return vnModel
     } catch {
-        // 🟫 棕色灯：说明模型类虽然存在，但初始化失败（可能是内存或版本问题）
-        DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5) }
+        DispatchQueue.main.async {
+            // 如果加载失败，直接打印具体的错误原因
+            self.debugStatusLabel.text = " ❌ 加载失败\n [错误]: \(error.localizedDescription)"
+            self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5)
+        }
         return nil
     }
 }()
@@ -166,6 +172,18 @@ class ViewController: UIViewController, YOLOViewDelegate {
     @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     @IBOutlet weak var logoImage: UIImageView!
 
+    private let debugStatusLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
+        label.numberOfLines = 0
+        label.layer.cornerRadius = 8
+        label.clipsToBounds = true
+        label.text = " [状态]: 准备中..."
+        return label
+    }()
+    
     // --- 在这里插入 ---
     // 粘贴这段模型初始化代码
     private var segmentationModel: VNCoreMLModel? = {
@@ -250,6 +268,15 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 将调试标签添加到主视图的最顶层
+        view.addSubview(debugStatusLabel)
+        debugStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            debugStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            debugStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            debugStatusLabel.widthAnchor.constraint(equalToConstant: 220),
+            debugStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
+        ])
         debugCheckModelFolders()
         setupExternalDisplayNotifications()
         checkForExternalDisplays()
