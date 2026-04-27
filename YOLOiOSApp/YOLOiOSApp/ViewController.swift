@@ -130,24 +130,32 @@ class ViewController: UIViewController, YOLOViewDelegate {
 
     // 懒加载分割模型，确保只在第一次使用时加载一次进入内存
     private lazy var deepLabModel: VNCoreMLModel? = {
-    // 尝试在 Models 文件夹下寻找模型
-    // 这里的 path 要对应你工程里的实际资源路径
-    guard let modelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc") ?? 
-                         Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodelc", subdirectory: "Models") else {
-        // 信号：橙色 -> 依然找不到文件
+    // 1. 寻找原始的未编译文件（注意这里去掉了 'c'，只找 .mlmodel）
+    let rawModelURL = Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodel", subdirectory: "Models") ?? 
+                      Bundle.main.url(forResource: "DeepLabV3", withExtension: "mlmodel")
+    
+    guard let url = rawModelURL else {
+        // 如果变成橙色，说明连原始的 .mlmodel 文件都没打进 App 包里
         DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .orange.withAlphaComponent(0.5) }
         return nil
     }
     
-    guard let model = try? VNCoreMLModel(for: MLModel(contentsOf: modelURL)) else {
-        // 信号：棕色 -> 找到文件但加载失败
+    do {
+        // 2. 核心黑科技：在 iPhone 运行时动态编译模型！
+        let compiledUrl = try MLModel.compileModel(at: url)
+        
+        // 3. 加载刚刚在手机上编译好的模型
+        let mlModel = try MLModel(contentsOf: compiledUrl)
+        let vnModel = try VNCoreMLModel(for: mlModel)
+        
+        // 如果变成蓝色，说明手机端动态编译并加载成功！
+        DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2) }
+        return vnModel
+    } catch {
+        // 如果变成棕色，说明找到了文件，但 iPhone 无法编译它（模型可能损坏或格式不支持）
         DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .brown.withAlphaComponent(0.5) }
         return nil
     }
-    
-    // 信号：蓝色 -> 终于加载成功了！
-    DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .blue.withAlphaComponent(0.2) }
-    return model
 }()
     
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
