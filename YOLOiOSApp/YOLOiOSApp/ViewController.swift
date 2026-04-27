@@ -654,22 +654,27 @@ extension ViewController {
         }
     
         let request = VNCoreMLRequest(model: visionModel) { request, error in
-            // 改进点：使用 FeatureValueObservation 提取 MultiArray
-            if let observations = request.results as? [VNCoreMLFeatureValueObservation],
-               let multiArray = observations.first?.featureValue.multiArrayValue {
-                // 将识别到的结果转换为像素图返回
-                completion(multiArray.pixelBuffer)
-            } else {
-                // 如果还是 nil，这里就是你看到的“红屏”原因
+            // 1. 尝试获取像素缓冲区输出 (VNPixelBufferObservation)
+            if let results = request.results as? [VNPixelBufferObservation], 
+               let buffer = results.first?.pixelBuffer {
+                DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .purple.withAlphaComponent(0.2) }
+                completion(buffer)
+            } 
+            // 2. 尝试获取多维数组输出 (VNCoreMLFeatureValueObservation)
+            else if let results = request.results as? [VNCoreMLFeatureValueObservation], 
+                      let multiArray = results.first?.featureValue.multiArrayValue {
+                DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .purple.withAlphaComponent(0.2) }
+                completion(multiArray.pixelBuffer) // 这里依赖于你工程中已有的 MLMultiArray 扩展
+            } 
+            else {
+                // 🔴 红色灯：模型在运行，但输出格式不符合预期
+                DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .red.withAlphaComponent(0.2) }
                 completion(nil)
             }
         }
     
-        // 工业环境推荐使用 .centerCrop 保持画面中心不畸变
-        request.imageCropAndScaleOption = .centerCrop
-        
+        request.imageCropAndScaleOption = .scaleFill
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
-        // 保持异步执行，不阻塞主线程
         DispatchQueue.global(qos: .userInteractive).async {
             try? handler.perform([request])
         }
