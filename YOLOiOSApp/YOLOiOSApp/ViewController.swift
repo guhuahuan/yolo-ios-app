@@ -158,6 +158,16 @@ class ViewController: UIViewController, YOLOViewDelegate {
     @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     @IBOutlet weak var logoImage: UIImageView!
 
+    // --- 在这里插入 ---
+    private lazy var roadMaskImageView: UIImageView = {
+        let iv = UIImageView()
+        iv.contentMode = .scaleFill
+        iv.alpha = 0.4
+        iv.isUserInteractionEnabled = false // 确保不影响你点击屏幕上的按钮
+        return iv
+    }()
+    // ----------------
+    
     let selection = UISelectionFeedbackGenerator()
     var currentLoadingEntry: ModelEntry?
     var customModelButton: UIButton!
