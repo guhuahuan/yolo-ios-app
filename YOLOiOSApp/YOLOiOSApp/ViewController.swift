@@ -641,30 +641,28 @@ extension ViewController {
     }
 
     func yoloView(_ view: YOLOView, didReceiveResult result: YOLOResult) {
-    if let frame = view.currentFrame {
-        performSegmentation(on: frame) { [weak self] mask in
-            guard let self = self else { return }
-            
-            if let roadMask = mask {
+       if let frame = view.currentFrame {
+            performSegmentation(on: frame) { [weak self] mask in
+                guard let self = self else { return }
+                
                 DispatchQueue.main.async {
-                    // 更新图片
-                    self.roadMaskImageView.image = UIImage(pixelBuffer: roadMask)
-                    // 调试：如果拿到了 mask，把背景变紫，没拿到就变红
-                    self.roadMaskImageView.backgroundColor = UIColor.purple.withAlphaComponent(0.3)
+                    if let roadMask = mask {
+                        // 1. 渲染真实的分割图
+                        self.roadMaskImageView.image = UIImage(pixelBuffer: roadMask)
+                        // 2. 清除背景色，否则会干扰视觉
+                        self.roadMaskImageView.backgroundColor = .clear 
+                    } else {
+                        // 只有失败时才显示红色背景警告
+                        self.roadMaskImageView.image = nil
+                        self.roadMaskImageView.backgroundColor = UIColor.red.withAlphaComponent(0.2)
+                    }
                 }
-            } else {
-                DispatchQueue.main.async {
-                    // 如果 mask 是 nil，背景变红报错
-                    self.roadMaskImageView.backgroundColor = UIColor.red.withAlphaComponent(0.3)
-                }
+                // 传给预警管理器
+                ADASWarningManager.shared.processDetections(result, roadMask: mask)
             }
-            
-            // 传给预警管理器
-            ADASWarningManager.shared.processDetections(result, roadMask: mask)
         }
-    }
     
-    DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.async { [weak self] in
         ExternalDisplayManager.shared.shareResults(result)
     }
 }
