@@ -674,13 +674,36 @@ extension ViewController {
 
 // MARK: - 语义分割逻辑扩展
 extension ViewController {
-    func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
+   func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
         guard let visionModel = deepLabModel else {
             completion(nil)
             return
         }
     
-        let request = VNCoreMLRequest(model: visionModel) { request, error in
+        let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
+            guard let self = self else { return }
+            
+            // --- 新增：实时打印加载/工作情况 ---
+            DispatchQueue.main.async {
+                let now = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss"
+                let timeString = formatter.string(from: now)
+                
+                if let err = error {
+                    self.debugStatusLabel.text = " ❌ 推理出错\n [错误]: \(err.localizedDescription)\n [时间]: \(timeString)"
+                } else {
+                    // 只要模型在跑，这里的时间就会实时跳动
+                    self.debugStatusLabel.text = """
+                     ✅ 模型运行中
+                     [模型]: DeepLabV3
+                     [更新]: \(timeString)
+                     [状态]: 正在实时分割道路
+                    """
+                }
+            }
+            // --------------------------------
+
             // 1. 尝试获取像素缓冲区输出 (VNPixelBufferObservation)
             if let results = request.results as? [VNPixelBufferObservation], 
                let buffer = results.first?.pixelBuffer {
@@ -691,10 +714,9 @@ extension ViewController {
             else if let results = request.results as? [VNCoreMLFeatureValueObservation], 
                       let multiArray = results.first?.featureValue.multiArrayValue {
                 DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .purple.withAlphaComponent(0.2) }
-                completion(multiArray.pixelBuffer) // 这里依赖于你工程中已有的 MLMultiArray 扩展
+                completion(multiArray.pixelBuffer) 
             } 
             else {
-                // 🔴 红色灯：模型在运行，但输出格式不符合预期
                 DispatchQueue.main.async { self.roadMaskImageView.backgroundColor = .red.withAlphaComponent(0.2) }
                 completion(nil)
             }
