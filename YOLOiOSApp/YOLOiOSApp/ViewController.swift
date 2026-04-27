@@ -606,6 +606,25 @@ class ViewController: UIViewController, YOLOViewDelegate {
         adjustLayoutForExternalDisplayIfNeeded()
     }
 
+    /// 更新屏幕顶部的调试标签，显示当前探测到的像素值
+    func updateDebugLabel(with pixelValue: UInt8) {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let timeString = formatter.string(from: now)
+        
+        // 使用主线程更新 UI
+        DispatchQueue.main.async {
+            self.debugStatusLabel.text = """
+             ✅ 模型运行中
+             [更新]: \(timeString)
+             [当前路面像素值]: \(pixelValue)
+             [提示]: 如果路面显示 7，请将代码改为 == 7
+            """
+        }
+    }
+    
+
     @objc func shareButtonTapped() {
         selection.selectionChanged()
         yoloView.capturePhoto { [weak self] image in
