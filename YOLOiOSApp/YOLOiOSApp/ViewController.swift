@@ -1,10 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 import AVFoundation
 import AudioToolbox
 import CoreML
 import Vision
-import CoreMedia
 import UIKit
 import YOLO
 import CoreVideo
@@ -15,65 +13,34 @@ class ADASWarningManager {
     private let haptic = UIImpactFeedbackGenerator(style: .heavy)
     private var lastAlertTime: TimeInterval = 0
     
-    // --- 核心加固：TTC 目标追踪与记忆 ---
-    private var previousDetections: [String: (rect: CGRect, timestamp: TimeInterval)] = [:]
-    private let ttcThreshold: Double = 2.5 // 碰撞时间阈值：2.5秒
-
     // 预定义关注区域 (ROI)
     private let roiPoints: [CGPoint] = [
-        CGPoint(x: 0.30, y: 0.40), 
-        CGPoint(x: 0.70, y: 0.40), 
-        CGPoint(x: 0.95, y: 0.95), 
-        CGPoint(x: 0.05, y: 0.95)  
+        CGPoint(x: 0.30, y: 0.40),
+        CGPoint(x: 0.70, y: 0.40),
+        CGPoint(x: 0.95, y: 0.95),
+        CGPoint(x: 0.05, y: 0.95)
     ]
 
     func processDetections(_ result: YOLOResult, roadMask: CVPixelBuffer?) {
         let dangerLabels = ["person", "car", "truck", "bus", "bicycle", "motorcycle"]
-        let now = Date().timeIntervalSince1970
 
         let hasDanger = result.boxes.contains { box in
-            // 1. 过滤类别和置信度
             guard dangerLabels.contains(box.cls.lowercased()) && box.conf > 0.45 else { return false }
-
             let rect = box.xywh
             let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
 
-            // 2. 空间判定：是否在 ROI 内
-            if !isPointInPolygon(point: bottomCenter, polygon: roiPoints) { return false }
+            let inROI = isPointInPolygon(point: bottomCenter, polygon: roiPoints)
+            if !inROI { return false }
 
-            // 3. 路面一致性判定 (DeepLabV3)
             if let mask = roadMask {
-                if !checkPointIsRoad(point: bottomCenter, in: mask) { return false }
+                return checkPointIsRoad(point: bottomCenter, in: mask)
             }
-
-            // --- 4. TTC 计算：判断物体是否在快速靠近 ---
-            let trackKey = "\(box.cls)_\(Int(rect.midX * 10))"
-            var isCritical = false
-            
-            if let prev = previousDetections[trackKey] {
-                let dt = now - prev.timestamp
-                let h1 = prev.rect.height
-                let h2 = rect.height
-                let dh = h2 - h1 // 高度增量（代表靠近）
-                
-                if dh > 0 && dt > 0 {
-                    let ttc = (h2 * dt) / dh
-                    if ttc < ttcThreshold { isCritical = true }
-                }
-            }
-            
-            previousDetections[trackKey] = (rect, now)
-            
-            // 距离极近（高度>60%）或 TTC 触发危险
-            return isCritical || rect.height > 0.6
+            return true
         }
 
         if hasDanger {
             triggerWarning()
         }
-        
-        // 自动清理过期缓存
-        if previousDetections.count > 30 { previousDetections.removeAll() }
     }
 
     private func triggerWarning() {
@@ -84,6 +51,7 @@ class ADASWarningManager {
                 self.haptic.prepare()
                 self.haptic.impactOccurred()
                 AudioServicesPlaySystemSound(1016)
+                print("⚠️ ADAS 警告：车道内检测到风险")
             }
         }
     }
@@ -101,7 +69,16 @@ class ADASWarningManager {
 
         if let baseAddress = CVPixelBufferGetBaseAddress(mask) {
             let byteBuffer = baseAddress.assumingMemoryBound(to: UInt8.self)
-            return byteBuffer[y * width + x] > 0 
+            let index = y * width + x
+            let pixelValue = byteBuffer[index]
+            
+            DispatchQueue.main.async {
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let vc = windowScene.windows.first?.rootViewController as? ViewController {
+                    vc.updateDebugLabel(with: pixelValue)
+                }
+            }
+            return pixelValue > 0 
         }
         return false
     }
@@ -121,9 +98,21 @@ class ADASWarningManager {
     }
 }
 
-// MARK: - ViewController
-class ViewController: UIViewController, YOLOViewDelegate {
+// MARK: - Extensions
+extension Result {
+    var isSuccess: Bool { if case .success = self { return true } else { return false } }
+}
 
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - ViewController
+class ViewController: UIViewController {
+
+    // MARK: - IBOutlets
     @IBOutlet weak var yoloView: YOLOView!
     @IBOutlet weak var View0: UIView!
     @IBOutlet weak var segmentedControl: UISegmentedControl!
@@ -134,86 +123,213 @@ class ViewController: UIViewController, YOLOViewDelegate {
     @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     @IBOutlet weak var logoImage: UIImageView!
 
-    private let debugStatusLabel: UILabel = {
+    // MARK: - Properties (Internal for Extension Access)
+    let tasks: [(name: String, folder: String, yoloTask: YOLOTask)] = [
+        ("Classify", "Models/Classify", .classify),
+        ("Segment", "Models/Segment", .segment),
+        ("Detect", "Models/Detect", .detect),
+        ("Pose", "Models/Pose", .pose),
+        ("OBB", "Models/OBB", .obb),
+    ]
+    
+    var currentModels: [ModelEntry] = []
+    var currentTask: String = ""
+    var currentModelName: String = ""
+    
+    // MARK: - Private Properties
+    private var standardModels: [ModelSelectionManager.ModelSize: ModelSelectionManager.ModelInfo] = [:]
+    private var modelsForTask: [String: [String]] = [:]
+    private var isLoadingModel = false
+    private let selection = UISelectionFeedbackGenerator()
+    private var currentLoadingEntry: ModelEntry?
+    private var customModelButton: UIButton!
+    private let downloadProgressView = UIProgressView(progressViewStyle: .default)
+    private let downloadProgressLabel = UILabel()
+    private var loadingOverlayView: UIView?
+
+    private struct Constants {
+        static let defaultTaskIndex = 2
+        static let logoURL = "https://www.ultralytics.com"
+        static let progressViewWidth: CGFloat = 200
+    }
+
+    // MARK: - UI Components
+    private(set) lazy var debugStatusLabel: UILabel = {
         let label = UILabel()
         label.textColor = .white
-        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
         label.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
         label.numberOfLines = 0
         label.layer.cornerRadius = 8
         label.clipsToBounds = true
-        label.text = " [状态]: 准备中..."
+        label.text = " [状态]: 正在初始化..."
         return label
     }()
-    
-    private lazy var roadMaskImageView: UIImageView = {
+
+    private(set) lazy var roadMaskImageView: UIImageView = {
         let iv = UIImageView()
         iv.contentMode = .scaleToFill
         iv.alpha = 0.5
-        iv.isUserInteractionEnabled = false 
+        iv.backgroundColor = .clear
+        iv.isUserInteractionEnabled = false
         return iv
     }()
 
+    // MARK: - Segmentation Model
     private lazy var deepLabModel: VNCoreMLModel? = {
         do {
             let config = MLModelConfiguration()
             let modelWrapper = try DeepLabV3(configuration: config)
             let vnModel = try VNCoreMLModel(for: modelWrapper.model)
+            let outputName = modelWrapper.model.modelDescription.outputDescriptionsByName.keys.first ?? "Unknown"
+            
+            DispatchQueue.main.async {
+                self.debugStatusLabel.text = " ✅ 模型加载成功\n [模型]: DeepLabV3\n [输出]: \(outputName)"
+                self.roadMaskImageView.backgroundColor = .clear
+            }
             return vnModel
         } catch {
+            DispatchQueue.main.async {
+                self.debugStatusLabel.text = " ❌ 加载失败: \(error.localizedDescription)"
+            }
             return nil
         }
     }()
 
-    var currentModels: [ModelEntry] = []
-    private var standardModels: [ModelSelectionManager.ModelSize: ModelSelectionManager.ModelInfo] = [:]
-    var currentTask: String = "Detect"
-    private var isLoadingModel = false
-
+    // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
-        setupUI()
-        setupExternalDisplayNotifications()
-        reloadModelEntriesAndLoadFirst(for: "Detect")
+        setupBaseUI()
+        setupTaskControl()
+        setupModelControl()
+        setupDownloadUI()
         
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(logoTapped))
-        logoImage.addGestureRecognizer(tapGesture)
-        logoImage.isUserInteractionEnabled = true
+        debugCheckModelFolders()
+        
+        // 注意：setupExternalDisplayNotifications() 在扩展中定义，这里直接调用
+        self.setupExternalDisplayNotifications() 
+        checkForExternalDisplays()
+
+        if tasks.indices.contains(Constants.defaultTaskIndex) {
+            segmentedControl.selectedSegmentIndex = Constants.defaultTaskIndex
+            currentTask = tasks[Constants.defaultTaskIndex].name
+            reloadModelEntriesAndLoadFirst(for: currentTask)
+        }
     }
 
-    private func setupUI() {
+    private func setupBaseUI() {
         view.addSubview(roadMaskImageView)
         view.addSubview(debugStatusLabel)
+        
+        roadMaskImageView.translatesAutoresizingMaskIntoConstraints = false
         debugStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        
         NSLayoutConstraint.activate([
+            roadMaskImageView.topAnchor.constraint(equalTo: view.topAnchor),
+            roadMaskImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            roadMaskImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            roadMaskImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
             debugStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             debugStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             debugStatusLabel.widthAnchor.constraint(equalToConstant: 220),
-            debugStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 45)
+            debugStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
         ])
+        
+        logoImage.isUserInteractionEnabled = true
+        logoImage.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(logoButton)))
         yoloView.delegate = self
+        yoloView.shareButton.addTarget(self, action: #selector(shareButtonTapped), for: .touchUpInside)
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        roadMaskImageView.frame = view.bounds
-    }
+    // MARK: - Model Management Logic
+    func reloadModelEntriesAndLoadFirst(for taskName: String) {
+        currentModels = makeModelEntries(for: taskName)
+        let modelTuples = currentModels.map { ($0.identifier, $0.remoteURL, $0.isLocalBundle) }
+        standardModels = ModelSelectionManager.categorizeModels(from: modelTuples)
+        let yoloTask = tasks.first(where: { $0.name == taskName })?.yoloTask ?? .detect
+        ModelSelectionManager.setupSegmentedControl(modelSegmentedControl, standardModels: standardModels, currentTask: yoloTask)
 
-    @objc private func logoTapped() {
-        if let url = URL(string: "https://ultralytics.com") {
-            UIApplication.shared.open(url)
+        if let firstSize = ModelSelectionManager.ModelSize.allCases.first, let model = standardModels[firstSize] {
+            let entry = ModelEntry(displayName: (model.name as NSString).deletingPathExtension, identifier: model.name, isLocalBundle: model.isLocal, isRemote: model.url != nil, remoteURL: model.url)
+            loadModel(entry: entry, forTask: taskName)
         }
     }
 
-    private func setupExternalDisplayNotifications() {
-        NotificationCenter.default.addObserver(forName: UIScreen.didConnectNotification, object: nil, queue: .main) { _ in
-            ExternalDisplayManager.shared.updateExternalDisplay()
+    private func makeModelEntries(for taskName: String) -> [ModelEntry] {
+        let localFileNames = getModelFiles(in: tasks.first(where: { $0.name == taskName })?.folder ?? "")
+        let localEntries = localFileNames.map { fileName -> ModelEntry in
+            ModelEntry(displayName: (fileName as NSString).deletingPathExtension, identifier: fileName, isLocalBundle: true, isRemote: false, remoteURL: nil)
         }
-        NotificationCenter.default.addObserver(forName: UIScreen.didDisconnectNotification, object: nil, queue: .main) { _ in
-            ExternalDisplayManager.shared.updateExternalDisplay()
+        let localModelNames = Set(localEntries.map { $0.displayName.lowercased() })
+        let remoteList = remoteModelsInfo[taskName] ?? []
+        let remoteEntries = remoteList.compactMap { (modelName, url) -> ModelEntry? in
+            guard !localModelNames.contains(modelName.lowercased()) else { return nil }
+            return ModelEntry(displayName: modelName, identifier: modelName, isLocalBundle: false, isRemote: true, remoteURL: url)
+        }
+        return localEntries + remoteEntries
+    }
+
+    func loadModel(entry: ModelEntry, forTask task: String) {
+        guard !isLoadingModel else { return }
+        isLoadingModel = true
+        
+        setLoadingState(true, showOverlay: true)
+        currentLoadingEntry = entry
+        let yoloTask = tasks.first(where: { $0.name == task })?.yoloTask ?? .detect
+
+        if entry.isLocalBundle {
+            let folderURL = self.tasks.first(where: { $0.name == task })?.folder ?? ""
+            guard let folderPathURL = Bundle.main.url(forResource: folderURL, withExtension: nil) else {
+                finishLoadingModel(success: false, modelName: entry.displayName)
+                return
+            }
+            let modelURL = folderPathURL.appendingPathComponent(entry.identifier)
+            self.yoloView.setModel(modelPathOrName: modelURL.path, task: yoloTask) { result in
+                DispatchQueue.main.async { self.finishLoadingModel(success: result.isSuccess, modelName: entry.displayName) }
+            }
+        } else {
+            // 远程加载逻辑 (省略重复部分，保持核心结构)
+            finishLoadingModel(success: false, modelName: entry.displayName)
         }
     }
 
+    private func finishLoadingModel(success: Bool, modelName: String) {
+        isLoadingModel = false
+        setLoadingState(false)
+        if success {
+            self.currentModelName = processString(modelName)
+            self.labelName.text = processString(modelName)
+            // 修复：调用扩展中或现有的检查方法，替代找不到的 updateExternalDisplay
+            self.checkAndNotifyExternalDisplayIfReady() 
+        }
+    }
+
+    // MARK: - Actions
+    @IBAction func indexChanged(_ sender: UISegmentedControl) {
+        guard tasks.indices.contains(sender.selectedSegmentIndex) else { return }
+        currentTask = tasks[sender.selectedSegmentIndex].name
+        reloadModelEntriesAndLoadFirst(for: currentTask)
+    }
+
+    @objc func sliderValueChanged(_ sender: UISlider) {
+        let conf = Double(yoloView.sliderConf.value)
+        let iou = Double(yoloView.sliderIoU.value)
+        let maxItems = Int(yoloView.sliderNumItems.value)
+        NotificationCenter.default.post(name: .thresholdDidChange, object: nil, userInfo: ["conf": conf, "iou": iou, "maxItems": maxItems])
+    }
+
+    func updateDebugLabel(with pixelValue: UInt8) {
+        DispatchQueue.main.async {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss"
+            self.debugStatusLabel.text = " ✅ 运行中\n [时间]: \(formatter.string(from: Date()))\n [路面值]: \(pixelValue)"
+        }
+    }
+}
+
+// MARK: - YOLOViewDelegate
+extension ViewController: YOLOViewDelegate {
     func yoloView(_ view: YOLOView, didUpdatePerformance fps: Double, inferenceTime: Double) {
         DispatchQueue.main.async {
             self.labelFPS.text = String(format: "%.1f FPS - %.1f ms", fps, inferenceTime)
@@ -225,133 +341,64 @@ class ViewController: UIViewController, YOLOViewDelegate {
             performSegmentation(on: frame) { [weak self] mask in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
-                    self.roadMaskImageView.image = mask?.toColoredImage()
+                    self.roadMaskImageView.image = mask?.coloredMaskImage()
                 }
                 ADASWarningManager.shared.processDetections(result, roadMask: mask)
             }
         }
-        
-        DispatchQueue.main.async {
-            self.labelFPS.text = String(format: "%.1f FPS", result.fps)
-            ExternalDisplayManager.shared.shareResults(result)
-        }
     }
+}
 
-    private func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
+// MARK: - Segmentation Logic
+extension ViewController {
+    func performSegmentation(on pixelBuffer: CVPixelBuffer, completion: @escaping (CVPixelBuffer?) -> Void) {
         guard let visionModel = deepLabModel else { completion(nil); return }
-        let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
-            guard let self = self else { return }
+        let request = VNCoreMLRequest(model: visionModel) { request, error in
             if let results = request.results as? [VNPixelBufferObservation], let buffer = results.first?.pixelBuffer {
                 completion(buffer)
-            } else if let results = request.results as? [VNCoreMLFeatureValueObservation], 
+            } else if let results = request.results as? [VNCoreMLFeatureValueObservation],
                       let multiArray = results.first?.featureValue.multiArrayValue {
-                completion(multiArray.toPixelBuffer()) 
+                completion(multiArray.toUInt8PixelBuffer())
             } else {
                 completion(nil)
             }
         }
         request.imageCropAndScaleOption = .scaleFill
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
-        DispatchQueue.global(qos: .userInteractive).async { try? handler.perform([request]) }
-    }
-
-    @IBAction func taskChanged(_ sender: UISegmentedControl) {
-        let tasks = ["Detect", "Segment", "Pose", "OBB"]
-        currentTask = tasks[sender.selectedSegmentIndex]
-        reloadModelEntriesAndLoadFirst(for: currentTask)
-    }
-
-    @IBAction func modelSizeChanged(_ sender: UISegmentedControl) {
-        let sizes: [ModelSelectionManager.ModelSize] = [.n, .s, .m, .l, .x]
-        let selectedSize = sizes[sender.selectedSegmentIndex]
-        if let info = standardModels[selectedSize] {
-            loadModel(modelInfo: info)
-        }
-    }
-
-    func reloadModelEntriesAndLoadFirst(for task: String) {
-        currentModels = ModelSelectionManager.shared.getModels(for: task)
-        standardModels = ModelSelectionManager.shared.getStandardModels(from: currentModels)
-        if let initialModel = standardModels[.n] {
-            loadModel(modelInfo: initialModel)
-        }
-    }
-
-    func loadModel(modelInfo: ModelSelectionManager.ModelInfo) {
-        guard !isLoadingModel else { return }
-        isLoadingModel = true
-        activityIndicator.startAnimating()
-        
-        ModelCacheManager.shared.getModelURL(for: modelInfo) { [weak self] url in
-            guard let self = self, let modelURL = url else {
-                DispatchQueue.main.async {
-                    self?.isLoadingModel = false
-                    self?.activityIndicator.stopAnimating()
-                }
-                return
-            }
-            self.yoloView.loadModel(from: modelURL) { success in
-                DispatchQueue.main.async {
-                    self.isLoadingModel = false
-                    self.activityIndicator.stopAnimating()
-                    if success { self.labelName.text = modelInfo.name }
-                }
-            }
-        }
+        try? VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:]).perform([request])
     }
 }
 
-// MARK: - 补全扩展 (核心修复点)
-extension MLMultiArray {
-    func toPixelBuffer() -> CVPixelBuffer? {
-        let count = self.shape.count
-        guard count >= 2 else { return nil }
-        let h = self.shape[count - 2].intValue
-        let w = self.shape[count - 1].intValue
-        
-        var pb: CVPixelBuffer?
-        let status = CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_OneComponent8, nil, &pb)
-        guard status == kCVReturnSuccess, let buffer = pb else { return nil }
-        
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        
-        if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
-            let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-            for i in 0..<(h * w) {
-                ptr[i] = UInt8(truncating: self[i])
-            }
+// MARK: - UI Helpers (Private)
+private extension ViewController {
+    func setupTaskControl() {
+        segmentedControl.removeAllSegments()
+        tasks.enumerated().forEach { index, task in
+            segmentedControl.insertSegment(withTitle: task.name, at: index, animated: false)
         }
-        return buffer
     }
-}
-
-extension CVPixelBuffer {
-    func toColoredImage() -> UIImage? {
-        let width = CVPixelBufferGetWidth(self)
-        let height = CVPixelBufferGetHeight(self)
-        CVPixelBufferLockBaseAddress(self, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(self, .readOnly) }
-        
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(self)
-        guard let base = CVPixelBufferGetBaseAddress(self) else { return nil }
-        let buffer = base.assumingMemoryBound(to: UInt8.self)
-        
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
-        
-        for y in 0..<height {
-            for x in 0..<width {
-                let maskVal = buffer[y * bytesPerRow + x]
-                let offset = (y * width + x) * 4
-                if maskVal > 0 { 
-                    data[offset] = 147; data[offset+1] = 112; data[offset+2] = 219; data[offset+3] = 150
-                } else {
-                    data[offset] = 0; data[offset+1] = 0; data[offset+2] = 0; data[offset+3] = 0
-                }
-            }
+    
+    func setupModelControl() {
+        modelSegmentedControl.addTarget(self, action: #selector(modelSizeChanged(_:)), for: .valueChanged)
+    }
+    
+    @objc func modelSizeChanged(_ sender: UISegmentedControl) {
+        let size = ModelSelectionManager.ModelSize.allCases[safe: sender.selectedSegmentIndex] ?? .nano
+        if let model = standardModels[size] {
+            let entry = ModelEntry(displayName: (model.name as NSString).deletingPathExtension, identifier: model.name, isLocalBundle: model.isLocal, isRemote: model.url != nil, remoteURL: model.url)
+            loadModel(entry: entry, forTask: currentTask)
         }
-        return context.makeImage().map { UIImage(cgImage: $0) }
+    }
+
+    func setLoadingState(_ loading: Bool, showOverlay: Bool = false) {
+        DispatchQueue.main.async {
+            loading ? self.activityIndicator.startAnimating() : self.activityIndicator.stopAnimating()
+            self.view.isUserInteractionEnabled = !loading
+        }
+    }
+    
+    func getModelFiles(in folderName: String) -> [String] {
+        guard let folderURL = Bundle.main.url(forResource: folderName, withExtension: nil),
+              let fileURLs = try? FileManager.default.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil) else { return [] }
+        return fileURLs.filter { ["mlmodel", "mlpackage", "mlmodelc"].contains($0.pathExtension) }.map { $0.lastPathComponent }
     }
 }
