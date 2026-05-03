@@ -4,7 +4,7 @@
 //  This file is part of the Ultralytics YOLO app, providing the main user interface for model selection and visualization.
 //  Licensed under AGPL-3.0. For commercial use, refer to Ultralytics licensing: https://ultralytics.com/license
 //  Access the source code: https://github.com/ultralytics/yolo-ios-app
-
+//
 import AVFoundation
 import AudioToolbox
 import CoreML
