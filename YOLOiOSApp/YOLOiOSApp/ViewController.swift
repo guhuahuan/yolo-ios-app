@@ -96,7 +96,7 @@ class ADASWarningManager {
             }
             
             // 调试建议：先保持 > 0，观察路面到底是多少，然后再改回 == 7
-            return pixelValue == 7
+            return pixelValue == 0
         }
         return false
     }
